@@ -22,19 +22,20 @@ function activate(context) {
     // New command: Create Work Item in Azure DevOps
 	const disposableCreateWorkItem = vscode.commands.registerCommand('teamsBot.createWorkItem', async function () {
 		try {
-			// Replace the configuration values below with your actual values
-			const organization = process.env.ORG;  // e.g. 'Contoso'
-			const project = process.env.AZURE_PROJECT;            
-			const workItemType = 'Task';   
-			const personalAccessToken=process.env.AZURE_PAT;
+			const organization = process.env.ORG;  // e.g., 'Contoso'
+			const project = process.env.AZURE_PROJECT;
+			const workItemType = 'Task';
+			const personalAccessToken = process.env.AZURE_PAT;
+			const assignedTo = process.env.ASSIGNED_TO; // New environment variable for the assignee's email or display name
+
 			if (!organization || !project || !personalAccessToken) {
 				throw new Error('Missing required environment variables: ORG, AZURE_PROJECT, AZURE_PAT');
 			}
-			
+
 			// Instantiate the AzureDevOpsClient
 			const client = new AzureDevOpsClient(organization, project, personalAccessToken);
 
-			// Define the JSON patch document to set the work item's fields.
+			// Define the JSON patch document to set the work item's fields
 			const patchDocument = [
 				{
 					"op": "add",
@@ -45,13 +46,17 @@ function activate(context) {
 					"op": "add",
 					"path": "/fields/System.Description",
 					"value": "This work item was created automatically via the Azure DevOps REST API."
+				},
+				{
+					"op": "add",
+					"path": "/fields/System.AssignedTo",
+					"value": assignedTo // Assign the ticket to the specified user
 				}
-                // Additional fields can be added here.
 			];
 
 			console.log('Attempting to create a new work item in Azure DevOps...');
-			
-			// Call the createWorkItem() method which returns a promise.
+
+			// Call the createWorkItem() method
 			const workItem = await client.createWorkItem(workItemType, patchDocument);
 			const message = `Work item created successfully with ID: ${workItem.id}`;
 			console.log(message);
