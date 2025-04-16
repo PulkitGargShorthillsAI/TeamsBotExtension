@@ -73,6 +73,9 @@ class ChatViewProvider {
 		const project = process.env.AZURE_PROJECT;            
 		const workItemType = 'Task';   
 		const personalAccessToken=process.env.AZURE_PAT;
+		const assignedTo = process.env.ASSIGNED_TO;
+
+
 		if (!organization || !project || !personalAccessToken) {
 			throw new Error('Missing required environment variables: ORG, AZURE_PROJECT, AZURE_PAT');
 		}
@@ -91,6 +94,11 @@ class ChatViewProvider {
 				"op": "add",
 				"path": "/fields/System.Description",
 				"value": "This work item was created automatically via the Azure DevOps REST API."
+			},
+			{
+				"op": "add",
+				"path": "/fields/System.AssignedTo",
+				"value": assignedTo // Assign the ticket to the specified user
 			}
 			// Additional fields can be added here.
 		];
@@ -99,7 +107,7 @@ class ChatViewProvider {
 		
 		// Call the createWorkItem() method which returns a promise.
 		const workItem = await client.createWorkItem(workItemType, patchDocument);
-		const message = `Work item created successfully with ID: ${workItem.id}`;
+		const message = `Work item created by ${assignedTo} successfully with ID: ${workItem.id} with title: ${text}`;
 		console.log(message);
 
 		const botResponse = `${message}`;
