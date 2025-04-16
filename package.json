@@ -16,13 +16,28 @@
     "commands": [
       {
         "command": "teamsBot.helloWorld",
-        "title": "Hello World"
-      },
-      {
-        "command": "teamsBot.sayHi",
-        "title": "Say Hi"
+        "title": "Teams Bot: Hello World"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "hello-bot-sidebar",
+          "title": "Teams Bot",
+          "icon": "$(comment)"
+        }
+      ]
+    },
+    "views": {
+      "hello-bot-sidebar": [
+        {
+          "type": "webview",
+          "id": "teamsBot.chatView",
+          "name": "Chat",
+          "icon": "$(comment)"
+        }
+      ]
+    }
   },
   "scripts": {
     "lint": "eslint .",
