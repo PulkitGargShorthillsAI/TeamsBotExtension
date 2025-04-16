@@ -1,4 +1,7 @@
 const vscode = require('vscode');
+const AzureDevOpsClient = require('./azureDevOpsClient');  // Ensure this file exists and is in the correct location
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 
 /**
  * @param {vscode.ExtensionContext} context
@@ -62,17 +65,82 @@ class ChatViewProvider {
     );
   }
 
-  _handleUserMessage(text) {
-    // Process the user's message and respond
-    const botResponse = `I received your message: "${text}"`;
+  async _handleUserMessage(text){
+
+	try {
+		// Replace the configuration values below with your actual values
+		const organization = process.env.ORG;  // e.g. 'Contoso'
+		const project = process.env.AZURE_PROJECT;            
+		const workItemType = 'Task';   
+		const personalAccessToken=process.env.AZURE_PAT;
+		if (!organization || !project || !personalAccessToken) {
+			throw new Error('Missing required environment variables: ORG, AZURE_PROJECT, AZURE_PAT');
+		}
+		
+		// Instantiate the AzureDevOpsClient
+		const client = new AzureDevOpsClient(organization, project, personalAccessToken);
+
+		// Define the JSON patch document to set the work item's fields.
+		const patchDocument = [
+			{
+				"op": "add",
+				"path": "/fields/System.Title",
+				"value": `${text}`,
+			},
+			{
+				"op": "add",
+				"path": "/fields/System.Description",
+				"value": "This work item was created automatically via the Azure DevOps REST API."
+			}
+			// Additional fields can be added here.
+		];
+
+		console.log('Attempting to create a new work item in Azure DevOps...');
+		
+		// Call the createWorkItem() method which returns a promise.
+		const workItem = await client.createWorkItem(workItemType, patchDocument);
+		const message = `Work item created successfully with ID: ${workItem.id}`;
+		console.log(message);
+
+		const botResponse = `${message}`;
     
-    // Send the bot's response back to the webview
-    if (this.view) {
-      this.view.webview.postMessage({ 
-        command: 'receiveMessage', 
-        text: botResponse 
-      });
-    }
+		// Send the bot's response back to the webview
+		if (this.view) {
+			this.view.webview.postMessage({ 
+				command: 'receiveMessage', 
+				text: botResponse 
+			});
+		}
+		// vscode.window.showInformationMessage(message);
+	} catch (error) {
+		console.error('Failed to create the work item:', error);
+
+		if (this.view) {
+			this.view.webview.postMessage({ 
+				command: 'receiveMessage', 
+				text: error.message
+			});
+		}
+
+
+
+		// vscode.window.showErrorMessage(`Failed to create work item: ${error.message}`);
+	}
+
+
+
+
+
+    // Process the user's message and respond
+    // const botResponse = `I received your message: "${text}"`;
+    
+    // // Send the bot's response back to the webview
+    // if (this.view) {
+    //   this.view.webview.postMessage({ 
+    //     command: 'receiveMessage', 
+    //     text: botResponse 
+    //   });
+    // }
   }
 
   _getHtmlForWebview() {
