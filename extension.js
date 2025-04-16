@@ -3,6 +3,26 @@ const AzureDevOpsClient = require('./azureDevOpsClient');  // Ensure this file e
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 
+async function getUserEmail() {
+    try {
+        // Get the authentication session for the Microsoft provider
+        const session = await vscode.authentication.getSession('microsoft', ['email'], { createIfNone: true });
+
+        if (session) {
+            // Extract the email from the session's account information
+            const email = session.account.label;
+            console.log('User email:', email);
+            return email;
+        } else {
+            console.error('No authentication session found.');
+            return null;
+        }
+    } catch (error) {
+        console.error('Failed to retrieve user email:', error);
+        return null;
+    }
+}
+
 /**
  * @param {vscode.ExtensionContext} context
  */
@@ -26,10 +46,15 @@ function activate(context) {
 			const project = process.env.AZURE_PROJECT;
 			const workItemType = 'Task';
 			const personalAccessToken = process.env.AZURE_PAT;
-			const assignedTo = process.env.ASSIGNED_TO; // New environment variable for the assignee's email or display name
 
 			if (!organization || !project || !personalAccessToken) {
 				throw new Error('Missing required environment variables: ORG, AZURE_PROJECT, AZURE_PAT');
+			}
+
+			// Retrieve the user's email from VS Code authentication
+			const assignedTo = await getUserEmail();
+			if (!assignedTo) {
+				throw new Error('Failed to retrieve the user email from VS Code authentication.');
 			}
 
 			// Instantiate the AzureDevOpsClient
@@ -50,7 +75,7 @@ function activate(context) {
 				{
 					"op": "add",
 					"path": "/fields/System.AssignedTo",
-					"value": assignedTo // Assign the ticket to the specified user
+					"value": assignedTo // Assign the ticket to the signed-in user
 				}
 			];
 
