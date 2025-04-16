@@ -22,14 +22,14 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "hello-bot-sidebar",
+          "id": "teams-bot-sidebar",
           "title": "Teams Bot",
           "icon": "$(comment)"
         }
       ]
     },
     "views": {
-      "hello-bot-sidebar": [
+      "teams-bot-sidebar": [
         {
           "type": "webview",
           "id": "teamsBot.chatView",
