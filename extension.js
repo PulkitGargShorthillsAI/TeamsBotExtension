@@ -1,7 +1,16 @@
 const vscode = require('vscode');
 const AzureDevOpsClient = require('./azureDevOpsClient');  // Ensure this file exists and is in the correct location
+
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+
+
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '.env') });
+
+// Load API key securely
+const API_KEY = process.env.GEMINI_API_KEY; // Store it in .env
+
+const genAI = new GoogleGenerativeAI(API_KEY);
 
 /**
  * @param {vscode.ExtensionContext} context
@@ -65,6 +74,68 @@ class ChatViewProvider {
     );
   }
 
+  async _getUserEmail() {
+		try {
+			// Get the authentication session for the Microsoft provider
+			const session = await vscode.authentication.getSession('microsoft', ['email'], { createIfNone: true });
+
+			if (session) {
+				// Extract the email from the session's account information
+				const email = session.account.label;
+				console.log('User email:', email);
+				return email;
+			} else {
+				console.error('No authentication session found.');
+				return null;
+			}
+		} catch (error) {
+			console.error('Failed to retrieve user email:', error);
+			return null;
+		}
+	}
+
+
+  async _generateAzureTicketDescription(title) {
+	if (!title || typeof title !== 'string') {
+	  return 'Invalid ticket title provided.';
+	}
+  
+	try {
+	  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  
+	  const prompt = `
+			You are an assistant that helps write structured Azure DevOps tickets.
+
+			Given the title: "${title}"
+
+			Generate a response in formatted HTML (without wrapping it in \`\`\`html or any code block fences). Use the following structure:
+
+			<b>Aim:</b><br>
+			(a short, one-line summary of the task)
+
+			<br><br><b>Acceptance Criteria:</b><br>
+			<ul>
+			<li>List of concrete requirements that define when this ticket is complete</li>
+			</ul>
+
+			<br><b>Outcomes:</b><br>
+			<ul>
+			<li>What changes or results will be produced once this ticket is done</li>
+			</ul>
+		`;
+
+  
+	  const result = await model.generateContent(prompt);
+	  const response = await result.response;
+	  const description = response.text().trim();
+  
+	  return description;
+	} catch (error) {
+	  console.error('Gemini Error:', error.message);
+	  return 'Failed to generate description.';
+	}
+  }
+
   async _handleUserMessage(text){
 
 	try {
@@ -73,7 +144,8 @@ class ChatViewProvider {
 		const project = process.env.AZURE_PROJECT;            
 		const workItemType = 'Task';   
 		const personalAccessToken=process.env.AZURE_PAT;
-		const assignedTo = process.env.ASSIGNED_TO;
+		const assignedTo = await this._getUserEmail(); // Get the user's email from the authentication session
+		const description = await this._generateAzureTicketDescription(text);
 
 
 		if (!organization || !project || !personalAccessToken) {
@@ -93,7 +165,7 @@ class ChatViewProvider {
 			{
 				"op": "add",
 				"path": "/fields/System.Description",
-				"value": "This work item was created automatically via the Azure DevOps REST API."
+				"value": `${description}`,
 			},
 			{
 				"op": "add",
@@ -135,20 +207,6 @@ class ChatViewProvider {
 		// vscode.window.showErrorMessage(`Failed to create work item: ${error.message}`);
 	}
 
-
-
-
-
-    // Process the user's message and respond
-    // const botResponse = `I received your message: "${text}"`;
-    
-    // // Send the bot's response back to the webview
-    // if (this.view) {
-    //   this.view.webview.postMessage({ 
-    //     command: 'receiveMessage', 
-    //     text: botResponse 
-    //   });
-    // }
   }
 
   _getHtmlForWebview() {
