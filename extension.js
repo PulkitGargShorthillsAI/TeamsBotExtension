@@ -212,8 +212,11 @@ class ChatViewProvider {
 		console.log('Attempting to create a new work item in Azure DevOps...');
 		
 		// Call the createWorkItem() method which returns a promise.
-		const workItem = await client.createWorkItem(workItemType, patchDocument);
-		const message = `Work item created by ${assignedTo} successfully with ID: ${workItem.id} with title: ${text}`;
+		// const workItem = await client.createWorkItem(workItemType, patchDocument);
+		// const message = `Work item created by ${assignedTo} successfully with ID: ${workItem.id} with title: ${text}\n
+		// general description:\n ${description}`;
+		const message = `Work item created by ${assignedTo} with title: ${text}<br><br><br>
+        General Description:<br><br>${description}`;
 		console.log(message);
 
 		const botResponse = `${message}`;
@@ -395,10 +398,17 @@ class ChatViewProvider {
           const messageElement = document.createElement('div');
           messageElement.classList.add('message');
           messageElement.classList.add(sender === 'user' ? 'user-message' : 'bot-message');
-          messageElement.textContent = text;
-          
+        
+          if (sender === 'bot') {
+            // Render HTML content for bot messages
+            messageElement.innerHTML = text;
+          } else {
+            // Escape and display plain text for user messages
+            messageElement.textContent = text;
+          }
+        
           messagesContainer.appendChild(messageElement);
-          
+        
           // Scroll to the bottom
           messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
