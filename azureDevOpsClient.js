@@ -123,6 +123,27 @@ class AzureDevOpsClient {
     }
     return workItem;
   }
+
+  async addComment(workItemId, commentText) {
+    await this._loadFetch();
+    const url = `${this.baseUrl}/wit/workitems/${workItemId}/comments?api-version=7.1-preview`; // Use 7.1-preview
+    const body = {
+      text: commentText
+    };
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        "Content-Type": "application/json",
+        ...this._getAuthHeader()
+      },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errText}`);
+    }
+    return res.json();
+  }
 }
 
 module.exports = AzureDevOpsClient;

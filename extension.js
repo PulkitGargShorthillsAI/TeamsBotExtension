@@ -34,7 +34,7 @@ class ChatViewProvider {
     };
     webviewView.webview.html = this._getHtml();
 
-    // Send updated instructions to the user
+    // Updated welcome message
     webviewView.webview.postMessage({
       command: 'receiveMessage',
       text: `
@@ -43,6 +43,7 @@ class ChatViewProvider {
         • <code>@create_ticket &lt;title&gt;</code> - Create a new ticket.<br>
         • <code>@view_tickets</code> - View your open tickets.<br>
         • <code>@view_tickets &lt;id&gt;</code> - View details of a specific ticket by ID.<br>
+        • <code>#&lt;id&gt; @comment &lt;comment text&gt;</code> - Add a comment to a specific ticket by ID.<br>
         • <code>@help</code> - Get information about available commands.<br>
         Feel free to ask me anything else!
       `
@@ -57,6 +58,15 @@ class ChatViewProvider {
 
   async _onUserMessage(text) {
     try {
+      // Handle adding comments to a work item
+      const commentMatch = text.match(/^#(\d+)\s+@comment\s+(.+)/i);
+      if (commentMatch) {
+        const workItemId = parseInt(commentMatch[1], 10);
+        const commentText = commentMatch[2].trim();
+        await this._addCommentToWorkItem(workItemId, commentText);
+        return;
+      }
+
       // Handle @view_tickets command with optional ID
       const viewMatch = text.match(/^@view_tickets\s*(\d+)?$/i);
       if (viewMatch) {
@@ -78,6 +88,7 @@ class ChatViewProvider {
           • <code>@create_ticket &lt;title&gt;</code> - Create a new ticket.<br>
           • <code>@view_tickets</code> - View your open tickets.<br>
           • <code>@view_tickets &lt;id&gt;</code> - View details of a specific ticket by ID.<br>
+          • <code>#&lt;id&gt; @comment &lt;comment text&gt;</code> - Add a comment to a specific ticket by ID.<br>
           • <code>@help</code> - Get information about available commands.<br>
           Feel free to ask me anything related to these commands!
         `);
@@ -483,6 +494,24 @@ class ChatViewProvider {
       .replace(/&gt;/g, '>')
       .replace(/&quot;/g, '"')
       .trim();
+  }
+
+  async _addCommentToWorkItem(workItemId, commentText) {
+    try {
+      const org = process.env.ORG, proj = process.env.AZURE_PROJECT, pat = process.env.AZURE_PAT;
+      const client = new AzureDevOpsClient(org, proj, pat);
+
+      // Add the comment to the work item
+      const response = await client.addComment(workItemId, commentText);
+      if (response) {
+        this._post(`✅ Comment added to work item <b>#${workItemId}</b>: "${commentText}"`);
+      } else {
+        this._post(`❌ Failed to add comment to work item <b>#${workItemId}</b>.`);
+      }
+    } catch (error) {
+      console.error('Error adding comment to work item:', error);
+      this._post(`❌ An error occurred while adding the comment: ${error.message}`);
+    }
   }
 }
 
