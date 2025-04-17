@@ -90,13 +90,26 @@ class ChatViewProvider {
   async _structureDesc(layman) {
     const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
     const prompt = `
-You are an assistant that writes Azure DevOps ticket descriptions.
-User says: "${layman}"
-Return only HTML with:
+			You are an assistant that helps write structured Azure DevOps tickets.
 
-<b>Aim:</b><br>(one-line)<br><br>
-<b>Acceptance Criteria:</b><br><ul><li>…</li></ul><br>
-<b>Outcomes:</b><br><ul><li>…</li></ul>`;
+			Given that the user says: "${layman}"
+
+			Generate a response in formatted HTML (without wrapping it in \`\`\`html or any code block fences). Use the following structure:
+
+			<b>Aim:</b><br>
+			(a short, one-line summary of the task)
+
+			<br><br><b>Acceptance Criteria:</b><br>
+			<ul>
+			<li>List of concrete requirements that define when this ticket is complete</li>
+			</ul>
+
+			<br><b>Outcomes:</b><br>
+			<ul>
+			<li>What changes or results will be produced once this ticket is done</li>
+			</ul>
+		`;
+
     const res = await (await model.generateContent(prompt)).response;
     return res.text().trim();
   }
@@ -158,69 +171,139 @@ Return only HTML with:
   }
 
   _getHtml() {
-    return `<!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Teams Bot</title>
-      <style>
-        body { font-family: var(--vscode-font-family); color: var(--vscode-editor-foreground); background-color: var(--vscode-editor-background); padding: 0; margin: 0; }
-        #chat-container { display: flex; flex-direction: column; height: 100vh; }
-        #messages { flex-grow: 1; overflow-y: auto; padding: 10px; }
-        .message { margin-bottom: 10px; padding: 8px; border-radius: 4px; max-width: 85%; word-wrap: break-word; }
-        .user-message { background-color: var(--vscode-badge-background); color: var(--vscode-badge-foreground); align-self: flex-end; }
-        .bot-message { background-color: var(--vscode-editor-inactiveSelectionBackground); align-self: flex-start; }
-        #input-container { display: flex; padding: 10px; border-top: 1px solid var(--vscode-input-border); }
-        #message-input { flex-grow: 1; padding: 6px 8px; margin-right: 8px; border: 1px solid var(--vscode-input-border); background-color: var(--vscode-input-background); color: var(--vscode-input-foreground); border-radius: 4px; }
-        button { padding: 6px 12px; background-color: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 4px; cursor: pointer; }
-        button:hover { background-color: var(--vscode-button-hoverBackground); }
-      </style>
-    </head>
-    <body>
-      <div id="chat-container">
-        <div id="messages"></div>
-        <div id="input-container">
-          <input type="text" id="message-input" placeholder="Type a message..." />
-          <button id="send-button">Send</button>
-        </div>
-      </div>
-      <script>
-        const vscode = acquireVsCodeApi();
-        const messagesContainer = document.getElementById('messages');
-        const messageInput = document.getElementById('message-input');
-        const sendButton = document.getElementById('send-button');
-
-        sendButton.addEventListener('click', sendMessage);
-        messageInput.addEventListener('keypress', event => {
-          if (event.key === 'Enter') sendMessage();
-        });
-
-        window.addEventListener('message', event => {
-          const message = event.data;
-          if (message.command === 'receiveMessage') appendMessage(message.text, 'bot');
-        });
-
-        function sendMessage() {
-          const text = messageInput.value.trim();
-          if (text) {
-            appendMessage(text, 'user');
-            vscode.postMessage({ command: 'sendMessage', text });
-            messageInput.value = '';
-          }
-        }
-
-        function appendMessage(text, sender) {
-          const messageElement = document.createElement('div');
-          messageElement.classList.add('message', sender === 'user' ? 'user-message' : 'bot-message');
-          messageElement.innerHTML = text;
-          messagesContainer.appendChild(messageElement);
-          messagesContainer.scrollTop = messagesContainer.scrollHeight;
-        }
-      </script>
-    </body>
-    </html>`;
-  }
+	return `<!DOCTYPE html>
+	<html lang="en">
+	<head>
+	  <meta charset="UTF-8">
+	  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+	  <title>Teams Bot</title>
+	  <style>
+		body {
+		  font-family: var(--vscode-font-family, 'Segoe UI', sans-serif);
+		  color: var(--vscode-editor-foreground);
+		  background-color: var(--vscode-editor-background);
+		  padding: 0;
+		  margin: 0;
+		  display: flex;
+		  flex-direction: column;
+		  height: 100vh;
+		}
+  
+		#chat-container {
+		  display: flex;
+		  flex-direction: column;
+		  height: 100%;
+		}
+  
+		#messages {
+		  flex-grow: 1;
+		  overflow-y: auto;
+		  padding: 16px;
+		  display: flex;
+		  flex-direction: column;
+		  gap: 12px;
+		}
+  
+		.message {
+		  padding: 10px 14px;
+		  border-radius: 16px;
+		  max-width: 75%;
+		  word-wrap: break-word;
+		  font-size: 14px;
+		  line-height: 1.4;
+		  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+		}
+  
+		.user-message {
+		  background-color: var(--vscode-badge-background);
+		  color: var(--vscode-badge-foreground);
+		  align-self: flex-end;
+		  border-bottom-right-radius: 4px;
+		}
+  
+		.bot-message {
+		  background-color: var(--vscode-editor-inactiveSelectionBackground);
+		  align-self: flex-start;
+		  border-bottom-left-radius: 4px;
+		}
+  
+		#input-container {
+		  display: flex;
+		  padding: 10px 12px;
+		  border-top: 1px solid var(--vscode-input-border);
+		  background-color: var(--vscode-editor-background);
+		}
+  
+		#message-input {
+		  flex-grow: 1;
+		  padding: 8px 12px;
+		  margin-right: 10px;
+		  border: 1px solid var(--vscode-input-border);
+		  background-color: var(--vscode-input-background);
+		  color: var(--vscode-input-foreground);
+		  border-radius: 20px;
+		  font-size: 14px;
+		}
+  
+		button {
+		  padding: 8px 16px;
+		  background-color: var(--vscode-button-background);
+		  color: var(--vscode-button-foreground);
+		  border: none;
+		  border-radius: 20px;
+		  cursor: pointer;
+		  font-size: 14px;
+		}
+  
+		button:hover {
+		  background-color: var(--vscode-button-hoverBackground);
+		}
+	  </style>
+	</head>
+	<body>
+	  <div id="chat-container">
+		<div id="messages"></div>
+		<div id="input-container">
+		  <input type="text" id="message-input" placeholder="Type a message..." />
+		  <button id="send-button">Send</button>
+		</div>
+	  </div>
+	  <script>
+		const vscode = acquireVsCodeApi();
+		const messagesContainer = document.getElementById('messages');
+		const messageInput = document.getElementById('message-input');
+		const sendButton = document.getElementById('send-button');
+  
+		sendButton.addEventListener('click', sendMessage);
+		messageInput.addEventListener('keypress', event => {
+		  if (event.key === 'Enter') sendMessage();
+		});
+  
+		window.addEventListener('message', event => {
+		  const message = event.data;
+		  if (message.command === 'receiveMessage') appendMessage(message.text, 'bot');
+		});
+  
+		function sendMessage() {
+		  const text = messageInput.value.trim();
+		  if (text) {
+			appendMessage(text, 'user');
+			vscode.postMessage({ command: 'sendMessage', text });
+			messageInput.value = '';
+		  }
+		}
+  
+		function appendMessage(text, sender) {
+		  const messageElement = document.createElement('div');
+		  messageElement.classList.add('message', sender === 'user' ? 'user-message' : 'bot-message');
+		  messageElement.innerHTML = text;
+		  messagesContainer.appendChild(messageElement);
+		  messagesContainer.scrollTop = messagesContainer.scrollHeight;
+		}
+	  </script>
+	</body>
+	</html>`;
+  }  
 }
 
 module.exports = { activate, deactivate };
