@@ -166,7 +166,6 @@ class ChatViewProvider {
   async _showTickets(workItemId = null) {
     try {
       const org = process.env.ORG, proj = process.env.AZURE_PROJECT, pat = process.env.AZURE_PAT;
-      const email = await this._getEmail();
       const client = new AzureDevOpsClient(org, proj, pat);
 
       if (workItemId) {
@@ -177,27 +176,13 @@ class ChatViewProvider {
           return;
         }
 
-        const details = `
-          <b>Work Item Details:</b><br>
-          <b>ID:</b> ${workItem.id}<br>
-          <b>Title:</b> ${workItem.fields['System.Title']}<br>
-          <b>Description:</b> ${workItem.fields['System.Description'] || 'No description provided'}<br>
-          <b>Created By:</b> ${workItem.fields['System.CreatedBy']}<br>
-          <b>Assigned To:</b> ${workItem.fields['System.AssignedTo']}<br>
-          <b>State:</b> ${workItem.fields['System.State']}<br>
-          <b>Comments:</b><br>
-          <ul>
-            ${(workItem.comments || []).map(c => `
-              <li>
-                <b>${c.createdBy}</b> (${new Date(c.createdDate).toLocaleString()}):<br>
-                ${c.text}
-              </li>
-            `).join('') || 'No comments'}
-          </ul>
-        `;
+        // Fetch history and format the work item
+        const history = await this._getWorkItemHistory(workItemId);
+        const details = this._formatWorkItem(workItem, history);
         this._post(details);
       } else {
         // Fetch all assigned work items
+        const email = await this._getEmail();
         const items = await client.getAssignedWorkItems(email);
         if (items.length === 0) {
           this._post('You have no open tickets.');
@@ -363,6 +348,137 @@ class ChatViewProvider {
 	</body>
 	</html>`;
   }  
+
+  async _getWorkItemHistory(workItemId) {
+    try {
+      const org = process.env.ORG, proj = process.env.AZURE_PROJECT, pat = process.env.AZURE_PAT;
+      const client = new AzureDevOpsClient(org, proj, pat);
+      const updatesUrl = `${client.baseUrl}/wit/workitems/${workItemId}/updates?api-version=${client.apiVersion}`;
+      const response = await fetch(updatesUrl, { headers: client._getAuthHeader() });
+      if (!response.ok) throw new Error(`Failed to fetch history: ${response.status}`);
+      const data = await response.json();
+      return data.value || [];
+    } catch (error) {
+      console.error("Error fetching work item history:", error);
+      return [];
+    }
+  }
+
+  _formatWorkItem(workItem, history = []) {
+    const fields = workItem.fields || {};
+    let formattedInfo = `<b>📄 WORK ITEM DETAILS</b><br><br>`;
+
+    // Basic information
+    formattedInfo += `<b>ID:</b> ${workItem.id}<br>`;
+    formattedInfo += `<b>Title:</b> ${fields['System.Title'] || 'N/A'}<br>`;
+    formattedInfo += `<b>State:</b> ${fields['System.State'] || 'N/A'}<br>`;
+    formattedInfo += `<b>Type:</b> ${fields['System.WorkItemType'] || 'N/A'}<br>`;
+
+    // People
+    formattedInfo += `<b>Created By:</b> ${fields['System.CreatedBy']?.displayName || 'N/A'}<br>`;
+    formattedInfo += `<b>Assigned To:</b> ${fields['System.AssignedTo']?.displayName || 'N/A'}<br>`;
+
+    // Dates
+    const createdDate = fields['System.CreatedDate'] ? new Date(fields['System.CreatedDate']).toLocaleString() : 'N/A';
+    formattedInfo += `<b>Created Date:</b> ${createdDate}<br>`;
+
+    if (fields['System.ChangedDate']) {
+      const changedDate = new Date(fields['System.ChangedDate']).toLocaleString();
+      formattedInfo += `<b>Last Updated:</b> ${changedDate}<br>`;
+    }
+
+    // Priority and effort
+    if (fields['Microsoft.VSTS.Common.Priority']) {
+      formattedInfo += `<b>Priority:</b> ${fields['Microsoft.VSTS.Common.Priority']}<br>`;
+    }
+
+    if (fields['Microsoft.VSTS.Scheduling.StoryPoints']) {
+      formattedInfo += `<b>Story Points:</b> ${fields['Microsoft.VSTS.Scheduling.StoryPoints']}<br>`;
+    }
+
+    // Add iteration and area path if available
+    if (fields['System.IterationPath']) {
+      formattedInfo += `<b>Iteration Path:</b> ${fields['System.IterationPath']}<br>`;
+    }
+
+    if (fields['System.AreaPath']) {
+      formattedInfo += `<b>Area Path:</b> ${fields['System.AreaPath']}<br>`;
+    }
+
+    // Description
+    formattedInfo += `<br><b>Description:</b><br>`;
+    formattedInfo += fields['System.Description'] ? this._stripHtml(fields['System.Description']) : 'No description provided.';
+
+    // Acceptance Criteria
+    if (fields['Microsoft.VSTS.Common.AcceptanceCriteria']) {
+      formattedInfo += `<br><br><b>Acceptance Criteria:</b><br>`;
+      formattedInfo += this._stripHtml(fields['Microsoft.VSTS.Common.AcceptanceCriteria']);
+    }
+
+    // Links to related work items
+    if (workItem.relations && workItem.relations.length > 0) {
+      const relatedItems = workItem.relations.filter(rel =>
+        rel.rel === 'System.LinkTypes.Related' ||
+        rel.rel === 'System.LinkTypes.Child' ||
+        rel.rel === 'System.LinkTypes.Parent'
+      );
+
+      if (relatedItems.length > 0) {
+        formattedInfo += `<br><br><b>Related Items:</b><br>`;
+        relatedItems.forEach(item => {
+          const relationType = item.rel.split('.').pop();
+          const itemUrl = item.url;
+          const itemId = itemUrl.substring(itemUrl.lastIndexOf('/') + 1);
+          formattedInfo += `- ${relationType}: #${itemId}<br>`;
+        });
+      }
+    }
+
+    // Discussion
+    let hasDiscussion = false;
+    formattedInfo += `<br><br><b>Discussion:</b><br>`;
+
+    if (history && history.length > 0) {
+      const discussionEntries = history.filter(update =>
+        update.fields &&
+        (update.fields['System.History'] ||
+          update.fields['System.CommentCount'])
+      );
+
+      if (discussionEntries.length > 0) {
+        hasDiscussion = true;
+        discussionEntries.forEach(entry => {
+          if (entry.fields['System.History']) {
+            formattedInfo += `<br>📝 <b>${entry.revisedBy?.displayName || 'Unknown'}:</b><br>`;
+            formattedInfo += `${this._stripHtml(entry.fields['System.History'].newValue)}<br>`;
+          }
+        });
+      }
+    }
+
+    if (!hasDiscussion) {
+      formattedInfo += 'No comments or discussion found for this work item.';
+    }
+
+    return formattedInfo;
+  }
+
+  _stripHtml(html) {
+    if (!html) return '';
+    return html
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n\n')
+      .replace(/<li>/gi, '- ')
+      .replace(/<\/li>/gi, '\n')
+      .replace(/<\/h[1-6]>/gi, '\n')
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .trim();
+  }
 }
 
 module.exports = { activate, deactivate };
