@@ -101,8 +101,10 @@ class AzureDevOpsClient {
     const workItem = await res.json();
 
     // Extract Created By and Assigned To
-    workItem.fields['System.CreatedBy'] = workItem.fields['System.CreatedBy']?.displayName || 'Unknown';
-    workItem.fields['System.AssignedTo'] = workItem.fields['System.AssignedTo']?.displayName || 'Unassigned';
+    const createdByField = workItem.fields['System.CreatedBy']['displayName'];
+    const assignedToField = workItem.fields['System.AssignedTo']['displayName'];
+    workItem.fields['System.CreatedBy'] = createdByField || 'Unknown';
+    workItem.fields['System.AssignedTo'] = assignedToField || 'Unassigned';
 
     // Fetch comments if available
     const commentsUrl = `${this.baseUrl}/wit/workitems/${workItemId}/comments?api-version=${this.apiVersion}`;
@@ -119,7 +121,6 @@ class AzureDevOpsClient {
     } else {
       workItem.comments = []; // No comments available
     }
-
     return workItem;
   }
 }

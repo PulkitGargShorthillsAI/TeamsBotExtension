@@ -34,7 +34,7 @@ class ChatViewProvider {
     };
     webviewView.webview.html = this._getHtml();
 
-    // Send initial instructions to the user
+    // Send updated instructions to the user
     webviewView.webview.postMessage({
       command: 'receiveMessage',
       text: `
@@ -42,6 +42,8 @@ class ChatViewProvider {
         Here are some commands you can use:<br>
         • <code>@create_ticket &lt;title&gt;</code> - Create a new ticket.<br>
         • <code>@view_tickets</code> - View your open tickets.<br>
+        • <code>@view_tickets &lt;id&gt;</code> - View details of a specific ticket by ID.<br>
+        • <code>@help</code> - Get information about available commands.<br>
         Feel free to ask me anything else!
       `
     });
@@ -75,6 +77,8 @@ class ChatViewProvider {
           <b>Here are the commands you can use:</b><br>
           • <code>@create_ticket &lt;title&gt;</code> - Create a new ticket.<br>
           • <code>@view_tickets</code> - View your open tickets.<br>
+          • <code>@view_tickets &lt;id&gt;</code> - View details of a specific ticket by ID.<br>
+          • <code>@help</code> - Get information about available commands.<br>
           Feel free to ask me anything related to these commands!
         `);
         return;
@@ -179,6 +183,7 @@ class ChatViewProvider {
         // Fetch history and format the work item
         const history = await this._getWorkItemHistory(workItemId);
         const details = this._formatWorkItem(workItem, history);
+
         this._post(details);
       } else {
         // Fetch all assigned work items
@@ -375,8 +380,8 @@ class ChatViewProvider {
     formattedInfo += `<b>Type:</b> ${fields['System.WorkItemType'] || 'N/A'}<br>`;
 
     // People
-    formattedInfo += `<b>Created By:</b> ${fields['System.CreatedBy']?.displayName || 'N/A'}<br>`;
-    formattedInfo += `<b>Assigned To:</b> ${fields['System.AssignedTo']?.displayName || 'N/A'}<br>`;
+    formattedInfo += `<b>Created By:</b> ${fields['System.CreatedBy']|| 'N/A'}<br>`;
+    formattedInfo += `<b>Assigned To:</b> ${fields['System.AssignedTo']|| 'N/A'}<br>`;
 
     // Dates
     const createdDate = fields['System.CreatedDate'] ? new Date(fields['System.CreatedDate']).toLocaleString() : 'N/A';
