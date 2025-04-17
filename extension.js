@@ -55,32 +55,52 @@ class ChatViewProvider {
 
   async _onUserMessage(text) {
     try {
-      // 1) Are we awaiting the layman description?
+      // 1) Handle greetings
+      if (/^(hi|hello|hey)$/i.test(text)) {
+        this._post('Hello! How can I assist you today?');
+        return;
+      }
+
+      // 2) Handle @help command
+      if (/^@help$/i.test(text)) {
+        this._post(`
+          <b>Here are the commands you can use:</b><br>
+          • <code>@create_ticket &lt;title&gt;</code> - Create a new ticket.<br>
+          • <code>@view_tickets</code> - View your open tickets.<br>
+          Feel free to ask me anything related to these commands!
+        `);
+        return;
+      }
+
+      // 3) Handle @create_ticket flow
       if (this.pendingTitle) {
-        const structured = await this._structureDesc(text);
-        await this._makeTicket(this.pendingTitle, structured);
+        const description = text.trim();
+        if (description && !/^(skip|leave it blank|leave blank)$/i.test(description)) {
+          const structured = await this._structureDesc(description);
+          await this._makeTicket(this.pendingTitle, structured);
+        } else {
+          await this._makeTicket(this.pendingTitle, "");
+        }
         this.pendingTitle = null;
         return;
       }
 
-      // 2) @create_ticket flow
       const createMatch = text.match(/^@create_ticket\s+(.+)/i);
       if (createMatch) {
         this.pendingTitle = createMatch[1].trim();
         this._post(`Got it! Title: <b>${this.pendingTitle}</b><br>
-          Please describe what needs to be done in simple terms.`);
+          Please describe what needs to be done in simple terms, or type "skip", "leave it blank", or "leave blank" to proceed without a description.`);
         return;
       }
 
-      // 3) @view_tickets flow
+      // 4) Handle @view_tickets command
       if (/^@view_tickets$/i.test(text)) {
         await this._showTickets();
         return;
       }
 
-      // 4) Fallback to general chat
-      const reply = await this._chatReply(text);
-      this._post(reply);
+      // 5) Fallback for unrelated questions
+      this._post("I am sorry, I don't know the answer.");
     } catch (error) {
       console.error('Error handling user message:', error);
       this._post(`❌ An error occurred: ${error.message}`);
