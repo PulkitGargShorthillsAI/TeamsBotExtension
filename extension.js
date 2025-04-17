@@ -167,24 +167,46 @@ class ChatViewProvider {
 		// Instantiate the AzureDevOpsClient
 		const client = new AzureDevOpsClient(organization, project, personalAccessToken);
 
-		// Define the JSON patch document to set the work item's fields.
+		const effort = process.env.DEFAULT_EFFORT || 4; // Default to 8 if not set
+		const priority = process.env.DEFAULT_PRIORITY || 1; // Default to 2 if not set
+		const activity = process.env.DEFAULT_ACTIVITY || "Development"; // Default to "Development" if not set
+
 		const patchDocument = [
 			{
 				"op": "add",
 				"path": "/fields/System.Title",
-				"value": `${text}`,
+				"value": `${text}`, // Title of the work item
 			},
 			{
 				"op": "add",
 				"path": "/fields/System.Description",
-				"value": `${description}`,
+				"value": `${description}`, // Description of the work item
 			},
 			{
 				"op": "add",
 				"path": "/fields/System.AssignedTo",
-				"value": assignedTo // Assign the ticket to the specified user
+				"value": assignedTo, // Assign the ticket to the specified user
+			},
+			{
+				"op": "add",
+				"path": "/fields/Microsoft.VSTS.Scheduling.OriginalEstimate",
+				"value": effort, // Set the Original Estimate (in hours)
+			},
+			{
+				"op": "add",
+				"path": "/fields/Microsoft.VSTS.Scheduling.CompletedWork",
+				"value": 0, // Set the Completed Work (default to 0)
+			},
+			{
+				"op": "add",
+				"path": "/fields/Microsoft.VSTS.Common.Priority",
+				"value": priority, // Set the Priority
+			},
+			{
+				"op": "add",
+				"path": "/fields/Microsoft.VSTS.Common.Activity",
+				"value": activity, // Set the Activity
 			}
-			// Additional fields can be added here.
 		];
 
 		console.log('Attempting to create a new work item in Azure DevOps...');
