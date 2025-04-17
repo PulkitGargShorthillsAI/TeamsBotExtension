@@ -55,6 +55,14 @@ class ChatViewProvider {
 
   async _onUserMessage(text) {
     try {
+      // Handle @view_tickets command with optional ID
+      const viewMatch = text.match(/^@view_tickets\s*(\d+)?$/i);
+      if (viewMatch) {
+        const workItemId = viewMatch[1] ? parseInt(viewMatch[1], 10) : null;
+        await this._showTickets(workItemId);
+        return;
+      }
+
       // 1) Handle greetings
       if (/^(hi|hello|hey)$/i.test(text)) {
         this._post('Hello! How can I assist you today?');
@@ -155,17 +163,48 @@ class ChatViewProvider {
     }
   }
 
-  async _showTickets() {
+  async _showTickets(workItemId = null) {
     try {
       const org = process.env.ORG, proj = process.env.AZURE_PROJECT, pat = process.env.AZURE_PAT;
       const email = await this._getEmail();
       const client = new AzureDevOpsClient(org, proj, pat);
-      const items = await client.getAssignedWorkItems(email);
-      if (items.length === 0) {
-        this._post('You have no open tickets.');
+
+      if (workItemId) {
+        // Fetch details of a specific work item
+        const workItem = await client.getWorkItemDetails(workItemId);
+        if (!workItem) {
+          this._post(`❌ Work item with ID <b>${workItemId}</b> not found.`);
+          return;
+        }
+
+        const details = `
+          <b>Work Item Details:</b><br>
+          <b>ID:</b> ${workItem.id}<br>
+          <b>Title:</b> ${workItem.fields['System.Title']}<br>
+          <b>Description:</b> ${workItem.fields['System.Description'] || 'No description provided'}<br>
+          <b>Created By:</b> ${workItem.fields['System.CreatedBy']}<br>
+          <b>Assigned To:</b> ${workItem.fields['System.AssignedTo']}<br>
+          <b>State:</b> ${workItem.fields['System.State']}<br>
+          <b>Comments:</b><br>
+          <ul>
+            ${(workItem.comments || []).map(c => `
+              <li>
+                <b>${c.createdBy}</b> (${new Date(c.createdDate).toLocaleString()}):<br>
+                ${c.text}
+              </li>
+            `).join('') || 'No comments'}
+          </ul>
+        `;
+        this._post(details);
       } else {
-        const list = items.map(w => `<li>#${w.id} — ${w.fields['System.Title']}</li>`).join('');
-        this._post(`<b>Your Tickets:</b><ul>${list}</ul>`);
+        // Fetch all assigned work items
+        const items = await client.getAssignedWorkItems(email);
+        if (items.length === 0) {
+          this._post('You have no open tickets.');
+        } else {
+          const list = items.map(w => `<li>#${w.id} — ${w.fields['System.Title']}</li>`).join('');
+          this._post(`<b>Your Tickets:</b><ul>${list}</ul>`);
+        }
       }
     } catch (e) {
       this._post(`❌ Couldn’t fetch tickets: ${e.message}`);
@@ -268,7 +307,7 @@ class ChatViewProvider {
 		button {
 		  padding: 8px 16px;
 		  background-color: var(--vscode-button-background);
-		  color: var(--vscode-button-foreground);
+		  color: var (--vscode-button-foreground);
 		  border: none;
 		  border-radius: 20px;
 		  cursor: pointer;

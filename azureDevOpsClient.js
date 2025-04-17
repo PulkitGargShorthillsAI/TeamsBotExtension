@@ -86,6 +86,42 @@ class AzureDevOpsClient {
     const batchData = await batchRes.json();
     return batchData.value;  // array of { id, fields, ... }
   }
+
+  async getWorkItemDetails(workItemId) {
+    await this._loadFetch();
+    const url = `${this.baseUrl}/wit/workitems/${workItemId}?$expand=all&api-version=${this.apiVersion}`;
+    const res = await fetch(url, {
+      headers: this._getAuthHeader()
+    });
+    if (!res.ok) {
+      if (res.status === 404) return null; // Work item not found
+      const errText = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errText}`);
+    }
+    const workItem = await res.json();
+
+    // Extract Created By and Assigned To
+    workItem.fields['System.CreatedBy'] = workItem.fields['System.CreatedBy']?.displayName || 'Unknown';
+    workItem.fields['System.AssignedTo'] = workItem.fields['System.AssignedTo']?.displayName || 'Unassigned';
+
+    // Fetch comments if available
+    const commentsUrl = `${this.baseUrl}/wit/workitems/${workItemId}/comments?api-version=${this.apiVersion}`;
+    const commentsRes = await fetch(commentsUrl, {
+      headers: this._getAuthHeader()
+    });
+    if (commentsRes.ok) {
+      const commentsData = await commentsRes.json();
+      workItem.comments = commentsData.comments.map(c => ({
+        text: c.text,
+        createdBy: c.createdBy.displayName,
+        createdDate: c.createdDate
+      }));
+    } else {
+      workItem.comments = []; // No comments available
+    }
+
+    return workItem;
+  }
 }
 
 module.exports = AzureDevOpsClient;
