@@ -145,6 +145,18 @@ class ChatViewProvider {
 		const workItemType = 'Task';   
 		const personalAccessToken=process.env.AZURE_PAT;
 		const assignedTo = await this._getUserEmail(); // Get the user's email from the authentication session
+		// const assignedTo = process.env.ASSIGNED_TO; // Get the user's email from the authentication session
+
+
+		if(assignedTo === null || !assignedTo.includes('@shorthills.ai')){
+			if (this.view) {
+				this.view.webview.postMessage({ 
+					command: 'receiveMessage', 
+					text: "You are not authorized to create tickets in Azure DevOps."
+				});
+			}
+			return;
+		}
 		const description = await this._generateAzureTicketDescription(text);
 
 
