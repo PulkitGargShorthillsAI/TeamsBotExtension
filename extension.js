@@ -61,6 +61,11 @@ class ChatViewProvider {
       // Handle adding comments to a work item
       const commentMatch = text.match(/^#(\d+)\s+@comment\s+(.+)/i);
       if (commentMatch) {
+        const userEMail = await this._getEmail();
+        if(userEMail === null || !userEMail.includes("@shorthills.ai")) {
+          this._post('❌ You are not authorized to view tickets. Please check your Azure DevOps permissions.');
+          return;
+        }
         const workItemId = parseInt(commentMatch[1], 10);
         const commentText = commentMatch[2].trim();
         await this._addCommentToWorkItem(workItemId, commentText);
@@ -70,6 +75,11 @@ class ChatViewProvider {
       // Handle @view_tickets command with optional ID
       const viewMatch = text.match(/^@view_tickets\s*(\d+)?$/i);
       if (viewMatch) {
+        const userEMail = await this._getEmail();
+        if(userEMail === null || !userEMail.includes("@shorthills.ai")) {
+          this._post('❌ You are not authorized to view tickets. Please check your Azure DevOps permissions.');
+          return;
+        }
         const workItemId = viewMatch[1] ? parseInt(viewMatch[1], 10) : null;
         await this._showTickets(workItemId);
         return;
@@ -174,7 +184,7 @@ class ChatViewProvider {
       const wi = await client.createWorkItem('Task', patch);
       this._post(`✅ Created <b>#${wi.id}</b> "${title}"<br>${htmlDesc}`);
     } catch (e) {
-      this._post(`❌ Error: ${e.message}`);
+      this._post(`❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`);
     }
   }
 
