@@ -63,7 +63,7 @@ class ChatViewProvider {
       if (commentMatch) {
         const userEMail = await this._getEmail();
         if(userEMail === null || !userEMail.includes("@shorthills.ai")) {
-          this._post('❌ You are not authorized to view tickets. Please check your Azure DevOps permissions.');
+          this._post('❌ You are not authorized to comment on tickets. Please check your Azure DevOps permissions.');
           return;
         }
         const workItemId = parseInt(commentMatch[1], 10);
@@ -241,138 +241,161 @@ class ChatViewProvider {
   }
 
   _getHtml() {
-	return `<!DOCTYPE html>
-	<html lang="en">
-	<head>
-	  <meta charset="UTF-8">
-	  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-	  <title>Teams Bot</title>
-	  <style>
-		body {
-		  font-family: var(--vscode-font-family, 'Segoe UI', sans-serif);
-		  color: var(--vscode-editor-foreground);
-		  background-color: var(--vscode-editor-background);
-		  padding: 0;
-		  margin: 0;
-		  display: flex;
-		  flex-direction: column;
-		  height: 100vh;
-		}
+    return `<!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Teams Bot</title>
+      <style>
+        body {
+          font-family: var(--vscode-font-family, 'Segoe UI', sans-serif);
+          color: var(--vscode-editor-foreground);
+          background-color: var(--vscode-editor-background);
+          padding: 0;
+          margin: 0;
+          display: flex;
+          flex-direction: column;
+          height: 100vh;
+        }
   
-		#chat-container {
-		  display: flex;
-		  flex-direction: column;
-		  height: 100%;
-		}
+        #chat-container {
+          display: flex;
+          flex-direction: column;
+          height: 100%;
+        }
   
-		#messages {
-		  flex-grow: 1;
-		  overflow-y: auto;
-		  padding: 16px;
-		  display: flex;
-		  flex-direction: column;
-		  gap: 12px;
-		}
+        #messages {
+          flex-grow: 1;
+          overflow-y: auto;
+          padding: 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
   
-		.message {
-		  padding: 10px 14px;
-		  border-radius: 16px;
-		  max-width: 75%;
-		  word-wrap: break-word;
-		  font-size: 14px;
-		  line-height: 1.4;
-		  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
-		}
+        .message {
+          padding: 10px 14px;
+          border-radius: 16px;
+          max-width: 75%;
+          word-wrap: break-word;
+          font-size: 14px;
+          line-height: 1.4;
+          box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+        }
   
-		.user-message {
-		  background-color: var(--vscode-badge-background);
-		  color: var(--vscode-badge-foreground);
-		  align-self: flex-end;
-		  border-bottom-right-radius: 4px;
-		}
+        .user-message {
+          background-color: var(--vscode-badge-background);
+          color: var(--vscode-badge-foreground);
+          align-self: flex-end;
+          border-bottom-right-radius: 4px;
+        }
   
-		.bot-message {
-		  background-color: var(--vscode-editor-inactiveSelectionBackground);
-		  align-self: flex-start;
-		  border-bottom-left-radius: 4px;
-		}
+        .bot-message {
+          background-color: var(--vscode-editor-inactiveSelectionBackground);
+          align-self: flex-start;
+          border-bottom-left-radius: 4px;
+        }
   
-		#input-container {
-		  display: flex;
-		  padding: 10px 12px;
-		  border-top: 1px solid var(--vscode-input-border);
-		  background-color: var(--vscode-editor-background);
-		}
+        #input-container {
+          display: flex;
+          padding: 10px 12px;
+          border-top: 1px solid var(--vscode-input-border);
+          background-color: var(--vscode-editor-background);
+        }
   
-		#message-input {
-		  flex-grow: 1;
-		  padding: 8px 12px;
-		  margin-right: 10px;
-		  border: 1px solid var(--vscode-input-border);
-		  background-color: var(--vscode-input-background);
-		  color: var(--vscode-input-foreground);
-		  border-radius: 20px;
-		  font-size: 14px;
-		}
+        #message-input {
+          flex-grow: 1;
+          padding: 8px 12px;
+          margin-right: 10px;
+          border: 1px solid var(--vscode-input-border);
+          background-color: var(--vscode-input-background);
+          color: var(--vscode-input-foreground);
+          border-radius: 20px;
+          font-size: 14px;
+        }
   
-		button {
-		  padding: 8px 16px;
-		  background-color: var(--vscode-button-background);
-		  color: var (--vscode-button-foreground);
-		  border: none;
-		  border-radius: 20px;
-		  cursor: pointer;
-		  font-size: 14px;
-		}
+        button {
+          padding: 8px 16px;
+          background-color: var(--vscode-button-background);
+          color: var(--vscode-button-foreground);
+          border: none;
+          border-radius: 20px;
+          cursor: pointer;
+          font-size: 14px;
+          margin-right: 8px;
+        }
   
-		button:hover {
-		  background-color: var(--vscode-button-hoverBackground);
-		}
-	  </style>
-	</head>
-	<body>
-	  <div id="chat-container">
-		<div id="messages"></div>
-		<div id="input-container">
-		  <input type="text" id="message-input" placeholder="Type a message..." />
-		  <button id="send-button">Send</button>
-		</div>
-	  </div>
-	  <script>
-		const vscode = acquireVsCodeApi();
-		const messagesContainer = document.getElementById('messages');
-		const messageInput = document.getElementById('message-input');
-		const sendButton = document.getElementById('send-button');
+        button:hover {
+          background-color: var(--vscode-button-hoverBackground);
+        }
   
-		sendButton.addEventListener('click', sendMessage);
-		messageInput.addEventListener('keypress', event => {
-		  if (event.key === 'Enter') sendMessage();
-		});
+        #quick-actions {
+          display: flex;
+          padding: 10px 12px;
+          border-bottom: 1px solid var(--vscode-input-border);
+          background-color: var(--vscode-editor-background);
+          gap: 8px;
+        }
+      </style>
+    </head>
+    <body>
+      <div id="chat-container">
+        <div id="quick-actions">
+          <button class="quick-action" data-text="@view_tickets">View Tickets</button>
+          <button class="quick-action" data-text="@help">Help</button>
+          <button class="quick-action" data-text="@create_ticket">Create Ticket</button>
+        </div>
+        <div id="messages"></div>
+        <div id="input-container">
+          <input type="text" id="message-input" placeholder="Type a message..." />
+          <button id="send-button">Send</button>
+        </div>
+      </div>
+      <script>
+        const vscode = acquireVsCodeApi();
+        const messagesContainer = document.getElementById('messages');
+        const messageInput = document.getElementById('message-input');
+        const sendButton = document.getElementById('send-button');
+        const quickActionButtons = document.querySelectorAll('.quick-action');
   
-		window.addEventListener('message', event => {
-		  const message = event.data;
-		  if (message.command === 'receiveMessage') appendMessage(message.text, 'bot');
-		});
+        sendButton.addEventListener('click', sendMessage);
+        messageInput.addEventListener('keypress', event => {
+          if (event.key === 'Enter') sendMessage();
+        });
   
-		function sendMessage() {
-		  const text = messageInput.value.trim();
-		  if (text) {
-			appendMessage(text, 'user');
-			vscode.postMessage({ command: 'sendMessage', text });
-			messageInput.value = '';
-		  }
-		}
+        quickActionButtons.forEach(button => {
+          button.addEventListener('click', () => {
+            const text = button.getAttribute('data-text');
+            messageInput.value = text;
+            messageInput.focus();
+          });
+        });
   
-		function appendMessage(text, sender) {
-		  const messageElement = document.createElement('div');
-		  messageElement.classList.add('message', sender === 'user' ? 'user-message' : 'bot-message');
-		  messageElement.innerHTML = text;
-		  messagesContainer.appendChild(messageElement);
-		  messagesContainer.scrollTop = messagesContainer.scrollHeight;
-		}
-	  </script>
-	</body>
-	</html>`;
+        window.addEventListener('message', event => {
+          const message = event.data;
+          if (message.command === 'receiveMessage') appendMessage(message.text, 'bot');
+        });
+  
+        function sendMessage() {
+          const text = messageInput.value.trim();
+          if (text) {
+            appendMessage(text, 'user');
+            vscode.postMessage({ command: 'sendMessage', text });
+            messageInput.value = '';
+          }
+        }
+  
+        function appendMessage(text, sender) {
+          const messageElement = document.createElement('div');
+          messageElement.classList.add('message', sender === 'user' ? 'user-message' : 'bot-message');
+          messageElement.innerHTML = text;
+          messagesContainer.appendChild(messageElement);
+          messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+      </script>
+    </body>
+    </html>`;
   }  
 
   async _getWorkItemHistory(workItemId) {
