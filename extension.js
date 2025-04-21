@@ -336,6 +336,7 @@ class ChatViewProvider {
           border-bottom: 1px solid var(--vscode-input-border);
           background-color: var(--vscode-editor-background);
           gap: 8px;
+          flex-wrap: wrap;
         }
       </style>
     </head>
@@ -345,6 +346,7 @@ class ChatViewProvider {
           <button class="quick-action" data-text="@view_tickets">View Tickets</button>
           <button class="quick-action" data-text="@help">Help</button>
           <button class="quick-action" data-text="@create_ticket">Create Ticket</button>
+          <button class="quick-action" data-text="#<id> @comment">Comment</button>
         </div>
         <div id="messages"></div>
         <div id="input-container">
