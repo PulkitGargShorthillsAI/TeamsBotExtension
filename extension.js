@@ -194,6 +194,9 @@ class ChatViewProvider {
 
   async _showTickets(workItemId = null) {
     try {
+      // console.log(this._getProjects());
+      // console.log(this._getOrganizations());
+      
       const org = process.env.ORG, proj = process.env.AZURE_PROJECT, pat = process.env.AZURE_PAT;
       const client = new AzureDevOpsClient(org, proj, pat);
       const email = await this._getEmail();
@@ -567,6 +570,111 @@ class ChatViewProvider {
     } catch (error) {
       console.error('Error adding comment to work item:', error);
       this._post(`❌ An error occurred while adding the comment: ${error.message}`);
+    }
+  }
+
+
+  async _getProjects() {
+    try {
+      const org = process.env.ORG;
+      const pat = process.env.AZURE_PAT;
+  
+      if (!org || !pat) {
+        throw new Error('Missing ORG or AZURE_PAT in environment variables.');
+      }
+  
+      const url = `https://dev.azure.com/${org}/_apis/projects?api-version=7.1-preview.4`;
+      const authHeader = {
+        Authorization: `Basic ${Buffer.from(`:${pat}`).toString('base64')}`
+      };
+  
+      const response = await fetch(url, { headers: authHeader });
+  
+      if (!response.ok) {
+        throw new Error(`Failed to fetch projects: ${response.status} ${response.statusText}`);
+      }
+  
+      const data = await response.json();
+      const projects = data.value;
+  
+      if (projects.length === 0) {
+        console.log('No projects found.');
+        this._post('No projects found.');
+      } else {
+        console.log('Projects:');
+        projects.forEach(project => {
+          console.log(`- ${project.name}`);
+        });
+  
+        const projectList = projects.map(project => `<li>${project.name}</li>`).join('');
+        this._post(`<b>Your Projects:</b><ul>${projectList}</ul>`);
+      }
+    } catch (error) {
+      console.error('Error fetching projects:', error);
+      this._post(`❌ Error fetching projects: ${error.message}`);
+    }
+  }
+
+
+
+
+
+
+  async _getOrganizations() {
+    try {
+      const pat = process.env.AZURE_PAT;
+  
+      if (!pat) {
+        throw new Error('Missing AZURE_PAT in environment variables.');
+      }
+  
+      // Step 1: Fetch the user's profile to get the memberId
+      const profileUrl = `https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1-preview.1`;
+      const authHeader = {
+        Authorization: `Basic ${Buffer.from(`:${pat}`).toString('base64')}`
+      };
+  
+      const profileResponse = await fetch(profileUrl, { headers: authHeader });
+  
+      if (!profileResponse.ok) {
+        const errorText = await profileResponse.text();
+        throw new Error(`Failed to fetch user profile: ${profileResponse.status} ${profileResponse.statusText} - ${errorText}`);
+      }
+  
+      const profileData = await profileResponse.json();
+      const memberId = profileData.id;
+  
+      if (!memberId) {
+        throw new Error('Failed to retrieve memberId from user profile.');
+      }
+  
+      // Step 2: Fetch the organizations using the memberId
+      const orgsUrl = `https://app.vssps.visualstudio.com/_apis/accounts?memberId=${memberId}&api-version=7.1-preview.1`;
+      const orgsResponse = await fetch(orgsUrl, { headers: authHeader });
+  
+      if (!orgsResponse.ok) {
+        const errorText = await orgsResponse.text();
+        throw new Error(`Failed to fetch organizations: ${orgsResponse.status} ${orgsResponse.statusText} - ${errorText}`);
+      }
+  
+      const orgsData = await orgsResponse.json();
+      const organizations = orgsData.value;
+  
+      if (!organizations || organizations.length === 0) {
+        console.log('No organizations found.');
+        this._post('No organizations found.');
+      } else {
+        console.log('Organizations:');
+        organizations.forEach(org => {
+          console.log(`- ${org.accountName}`);
+        });
+  
+        const orgList = organizations.map(org => `<li>${org.accountName}</li>`).join('');
+        this._post(`<b>Your Organizations:</b><ul>${orgList}</ul>`);
+      }
+    } catch (error) {
+      console.error('Error fetching organizations:', error);
+      this._post(`❌ Error fetching organizations: ${error.message}`);
     }
   }
 }
