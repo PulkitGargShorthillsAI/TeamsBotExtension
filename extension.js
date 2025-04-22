@@ -58,41 +58,26 @@ class ChatViewProvider {
 
   async _onUserMessage(text) {
     try {
-      // Handle adding comments to a work item
-      const commentMatch = text.match(/^#(\d+)\s+@comment\s+(.+)/i);
-      if (commentMatch) {
-        const userEMail = await this._getEmail();
-        if(userEMail === null || !userEMail.includes("@shorthills.ai")) {
-          this._post('❌ You are not authorized to comment on tickets. Please check your Azure DevOps permissions.');
+      // Use GEMINI to classify the user's input into a command
+      const command = await this._getCommandFromGemini(text);
+
+      // Execute the command returned by GEMINI
+      if (command.startsWith('@create_ticket')) {
+        const match = command.match(/^@create_ticket\s+(.+?)(?:\s+description\s+"(.+)")?$/i);
+        if (match) {
+          const title = match[1].trim();
+          const description = match[2] ? match[2].trim() : null;
+          this.pendingTitle = title;
+          if (description) {
+            const structured = await this._structureDesc(description);
+            await this._makeTicket(title, structured);
+          } else {
+            this._post(`Got it! Title: <b>${title}</b><br>
+              Please describe what needs to be done in simple terms, or type "skip", "leave it blank", or "leave blank" to proceed without a description.`);
+          }
           return;
         }
-        const workItemId = parseInt(commentMatch[1], 10);
-        const commentText = commentMatch[2].trim();
-        await this._addCommentToWorkItem(workItemId, commentText);
-        return;
-      }
-
-      // Handle @view_tickets command with optional ID
-      const viewMatch = text.match(/^@view_tickets\s*(\d+)?$/i);
-      if (viewMatch) {
-        const userEMail = await this._getEmail();
-        if(userEMail === null || !userEMail.includes("@shorthills.ai")) {
-          this._post('❌ You are not authorized to view tickets. Please check your Azure DevOps permissions.');
-          return;
-        }
-        const workItemId = viewMatch[1] ? parseInt(viewMatch[1], 10) : null;
-        await this._showTickets(workItemId);
-        return;
-      }
-
-      // 1) Handle greetings
-      if (/^(hi|hello|hey)$/i.test(text)) {
-        this._post('Hello! How can I assist you today?');
-        return;
-      }
-
-      // 2) Handle @help command
-      if (/^@help$/i.test(text)) {
+      } else if (command === '@help') {
         this._post(`
           <b>Here are the commands you can use:</b><br>
           • <code>@create_ticket &lt;title&gt;</code> - Create a new ticket.<br>
@@ -102,41 +87,54 @@ class ChatViewProvider {
           • <code>@help</code> - Get information about available commands.<br>
           Feel free to ask me anything related to these commands!
         `);
-        return;
-      }
-
-      // 3) Handle @create_ticket flow
-      if (this.pendingTitle) {
-        const description = text.trim();
-        if (description && !/^(skip|leave it blank|leave blank)$/i.test(description)) {
-          const structured = await this._structureDesc(description);
-          await this._makeTicket(this.pendingTitle, structured);
-        } else {
-          await this._makeTicket(this.pendingTitle, "");
-        }
-        this.pendingTitle = null;
-        return;
-      }
-
-      const createMatch = text.match(/^@create_ticket\s+(.+)/i);
-      if (createMatch) {
-        this.pendingTitle = createMatch[1].trim();
-        this._post(`Got it! Title: <b>${this.pendingTitle}</b><br>
-          Please describe what needs to be done in simple terms, or type "skip", "leave it blank", or "leave blank" to proceed without a description.`);
-        return;
-      }
-
-      // 4) Handle @view_tickets command
-      if (/^@view_tickets$/i.test(text)) {
+      } else if (command === '@view_tickets') {
         await this._showTickets();
-        return;
+      } else if (command.startsWith('@view_tickets')) {
+        const match = command.match(/^@view_tickets\s+(\d+)$/i);
+        if (match) {
+          const workItemId = parseInt(match[1], 10);
+          await this._showTickets(workItemId);
+        }
+      } else if (command.startsWith('#') && command.includes('@comment')) {
+        const match = command.match(/^#(\d+)\s+@comment\s+(.+)/i);
+        if (match) {
+          const workItemId = parseInt(match[1], 10);
+          const commentText = match[2].trim();
+          await this._addCommentToWorkItem(workItemId, commentText);
+        }
+      } else {
+        this._post("I am sorry, I don't know the answer.");
       }
-
-      // 5) Fallback for unrelated questions
-      this._post("I am sorry, I don't know the answer.");
     } catch (error) {
       console.error('Error handling user message:', error);
       this._post(`❌ An error occurred: ${error.message}`);
+    }
+  }
+
+  async _getCommandFromGemini(userMessage) {
+    try {
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+      const prompt = `
+        You are an intelligent assistant that interprets user messages and maps them to predefined commands.
+        Based on the user's message, return
+
+        Available commands:
+        - @help: Provide help information about available commands.
+        - @view_tickets: View all tickets assigned to the user.
+        - @view_tickets <id>: View details of a specific ticket by ID.
+        - @create_ticket <title>: Create a new ticket with the given title.
+        - @create_ticket <title> description "<description>": Create a new ticket with the given title and description.
+        - #<id> @comment <comment text>: Add a comment to a specific ticket by ID.
+
+        User message: "${userMessage}"
+      `;
+
+      const response = await model.generateContent(prompt);
+      console.log('GEMINI response:', response.response.text());
+      return response.response.text().trim();
+    } catch (error) {
+      console.error('Error fetching command from GEMINI:', error);
+      return null; // Return null if GEMINI fails
     }
   }
 
@@ -172,6 +170,11 @@ class ChatViewProvider {
       const org = process.env.ORG, proj = process.env.AZURE_PROJECT, pat = process.env.AZURE_PAT;
       if (!org || !proj || !pat) throw new Error('Missing ORG/AZURE_PROJECT/AZURE_PAT');
       const email = await this._getEmail();
+
+      if(email === null) {
+        this._post(`❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`);
+        return;
+      }
       const client = new AzureDevOpsClient(org, proj, pat);
       const patch = [
         { op: 'add', path: '/fields/System.Title', value: title },
@@ -192,6 +195,11 @@ class ChatViewProvider {
     try {
       const org = process.env.ORG, proj = process.env.AZURE_PROJECT, pat = process.env.AZURE_PAT;
       const client = new AzureDevOpsClient(org, proj, pat);
+      const email = await this._getEmail();
+        if(email === null) {
+          this._post(`❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`);
+          return;
+        }
 
       if (workItemId) {
         // Fetch details of a specific work item
@@ -208,7 +216,7 @@ class ChatViewProvider {
         this._post(details);
       } else {
         // Fetch all assigned work items
-        const email = await this._getEmail();
+        
         const items = await client.getAssignedWorkItems(email);
         if (items.length === 0) {
           this._post('You have no open tickets.');
@@ -230,6 +238,9 @@ class ChatViewProvider {
   async _getEmail() {
     try {
       const session = await vscode.authentication.getSession('microsoft', ['email'], { createIfNone: true });
+      if(session.account && session.account.label && !session.account.label.endsWith('@shorthills.ai')) {
+        return null;
+      }
       return session.account.label;
     } catch {
       return null;
@@ -535,6 +546,13 @@ class ChatViewProvider {
     try {
       const org = process.env.ORG, proj = process.env.AZURE_PROJECT, pat = process.env.AZURE_PAT;
       const client = new AzureDevOpsClient(org, proj, pat);
+
+      const email = await this._getEmail();
+
+      if(email === null) {
+        this._post(`❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`);
+        return;
+      }
 
       // Add the comment to the work item
       const response = await client.addComment(workItemId, commentText);
