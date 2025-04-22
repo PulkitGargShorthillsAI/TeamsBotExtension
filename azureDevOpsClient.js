@@ -1,14 +1,7 @@
 // azureDevOpsClient.js
-let fetch; // Declare fetch variable
+let fetch; // will be dynamically imported
 
 class AzureDevOpsClient {
-  /**
-   * Initializes the client with organization, project, and PAT details.
-   * @param {string} organization - The Azure DevOps organization name.
-   * @param {string} project - The Azure DevOps project name.
-   * @param {string} personalAccessToken - Your Azure DevOps Personal Access Token (PAT).
-   * @param {string} [apiVersion='7.1'] - The API version to use.
-   */
   constructor(organization, project, personalAccessToken, apiVersion = '7.1') {
     this.organization = organization;
     this.project = project;
@@ -17,63 +10,139 @@ class AzureDevOpsClient {
     this.baseUrl = `https://dev.azure.com/${this.organization}/${this.project}/_apis`;
   }
 
-  /**
-   * Private method to dynamically load fetch.
-   */
   async _loadFetch() {
     if (!fetch) {
-      fetch = (await import('node-fetch')).default; // Dynamically import node-fetch
+      fetch = (await import('node-fetch')).default;
     }
   }
 
-  /**
-   * Private method to get the authorization header.
-   * @returns {Object} Authorization header object.
-   */
   _getAuthHeader() {
-    // The username is blank, so we use ":<PAT>".
-    const encodedPAT = Buffer.from(`:${this.personalAccessToken}`).toString('base64');
-    return { "Authorization": `Basic ${encodedPAT}` };
+    const encoded = Buffer.from(`:${this.personalAccessToken}`).toString('base64');
+    return { "Authorization": `Basic ${encoded}` };
   }
 
-  /**
-   * Creates a new work item (ticket) in Azure DevOps.
-   * @param {string} workItemType - The type of work item (e.g., Task, Bug, User Story).
-   * @param {Array<Object>} patchDocument - The JSON patch document for the work item.
-   * @returns {Promise<Object>} The created work item object.
-   */
   async createWorkItem(workItemType, patchDocument) {
-    await this._loadFetch(); // Ensure fetch is loaded
+    await this._loadFetch();
     const url = `${this.baseUrl}/wit/workitems/$${workItemType}?api-version=${this.apiVersion}`;
-    // Combine required headers.
     const headers = {
       "Content-Type": "application/json-patch+json",
       ...this._getAuthHeader()
     };
-
-    try {
-      console.log(`Sending PATCH request to: ${url}`);
-      const response = await fetch(url, {
-        method: 'PATCH',
-        headers: headers,
-        body: JSON.stringify(patchDocument)
-      });
-
-      if (!response.ok) {
-        // Read response text for error details.
-        const errorText = await response.text();
-        console.error(`Error creating work item - ${response.status}: ${response.statusText}`);
-        console.error(`Response: ${errorText}`);
-        throw new Error(`Failed to create work item. HTTP status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      console.log(`Work item created successfully with ID: ${data.id}`);
-      return data;
-    } catch (error) {
-      console.error(`Exception in createWorkItem: ${error.message}`);
-      throw error;
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify(patchDocument)
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errText}`);
     }
+    return res.json();
+  }
+
+  /**
+   * Fetch all non‑closed work items assigned to the given email.
+   * @param {string} assignedToEmail 
+   * @returns {Promise<Array<{ id: number, fields: object }>>}
+   */
+  async getAssignedWorkItems(assignedToEmail) {
+    await this._loadFetch();
+    // 1) Run a WIQL query
+    const wiqlUrl = `${this.baseUrl}/wit/wiql?api-version=${this.apiVersion}`;
+    const wiqlBody = {
+      query: `
+        SELECT [System.Id]
+        FROM workitems
+        WHERE [System.AssignedTo] = '${assignedToEmail}'
+          AND [System.State] <> 'Closed'
+        ORDER BY [System.Id] DESC
+      `
+    };
+    const wiqlRes = await fetch(wiqlUrl, {
+      method: 'POST',
+      headers: {
+        "Content-Type": "application/json",
+        ...this._getAuthHeader()
+      },
+      body: JSON.stringify(wiqlBody)
+    });
+    if (!wiqlRes.ok) {
+      const t = await wiqlRes.text();
+      throw new Error(`WIQL failed: ${wiqlRes.status} ${t}`);
+    }
+    const wiqlData = await wiqlRes.json();
+    const ids = wiqlData.workItems.map(w => w.id);
+    if (ids.length === 0) return [];
+
+    // 2) Batch‑fetch the details
+    const batchUrl = `${this.baseUrl}/wit/workitems?ids=${ids.join(',')}&api-version=${this.apiVersion}`;
+    const batchRes = await fetch(batchUrl, {
+      headers: this._getAuthHeader()
+    });
+    if (!batchRes.ok) {
+      const t = await batchRes.text();
+      throw new Error(`Batch fetch failed: ${batchRes.status} ${t}`);
+    }
+    const batchData = await batchRes.json();
+    return batchData.value;  // array of { id, fields, ... }
+  }
+
+  async getWorkItemDetails(workItemId) {
+    await this._loadFetch();
+    const url = `${this.baseUrl}/wit/workitems/${workItemId}?$expand=all&api-version=${this.apiVersion}`;
+    const res = await fetch(url, {
+      headers: this._getAuthHeader()
+    });
+    if (!res.ok) {
+      if (res.status === 404) return null; // Work item not found
+      const errText = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errText}`);
+    }
+    const workItem = await res.json();
+
+    // Extract Created By and Assigned To
+    const createdByField = workItem.fields['System.CreatedBy']['displayName'];
+    const assignedToField = workItem.fields['System.AssignedTo']['displayName'];
+    workItem.fields['System.CreatedBy'] = createdByField || 'Unknown';
+    workItem.fields['System.AssignedTo'] = assignedToField || 'Unassigned';
+
+    // Fetch comments if available
+    const commentsUrl = `${this.baseUrl}/wit/workitems/${workItemId}/comments?api-version=${this.apiVersion}`;
+    const commentsRes = await fetch(commentsUrl, {
+      headers: this._getAuthHeader()
+    });
+    if (commentsRes.ok) {
+      const commentsData = await commentsRes.json();
+      workItem.comments = commentsData.comments.map(c => ({
+        text: c.text,
+        createdBy: c.createdBy.displayName,
+        createdDate: c.createdDate
+      }));
+    } else {
+      workItem.comments = []; // No comments available
+    }
+    return workItem;
+  }
+
+  async addComment(workItemId, commentText) {
+    await this._loadFetch();
+    const url = `${this.baseUrl}/wit/workitems/${workItemId}/comments?api-version=7.1-preview`; // Use 7.1-preview
+    const body = {
+      text: commentText
+    };
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        "Content-Type": "application/json",
+        ...this._getAuthHeader()
+      },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errText}`);
+    }
+    return res.json();
   }
 }
 

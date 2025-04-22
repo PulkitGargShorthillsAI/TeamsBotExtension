@@ -1,112 +1,151 @@
+// extension.js
 const vscode = require('vscode');
-const AzureDevOpsClient = require('./azureDevOpsClient');  // Ensure this file exists and is in the correct location
-
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-
-
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '.env') });
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const AzureDevOpsClient = require('./azureDevOpsClient');
 
-// Load API key securely
-const API_KEY = process.env.GEMINI_API_KEY; // Store it in .env
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-const genAI = new GoogleGenerativeAI(API_KEY);
-
-/**
- * @param {vscode.ExtensionContext} context
- */
 function activate(context) {
-  console.log('Congratulations, your extension Teams Bot is now active!');
-
-  // Register the original hello world command
-  const helloWorldCommand = vscode.commands.registerCommand('teamsBot.helloWorld', function () {
-    vscode.window.showInformationMessage('Hello World from TeamsBot!');
-  });
-
-  // Register the Chat View Provider
-  const chatViewProvider = new ChatViewProvider(context.extensionUri);
-  
-  // Register the view
-  const chatView = vscode.window.registerWebviewViewProvider(
-    "teamsBot.chatView",
-    chatViewProvider,
-    {
-      webviewOptions: {
-        retainContextWhenHidden: true
-      }
-    }
+  console.log('Teams Bot extension active');
+  const provider = new ChatViewProvider(context.extensionUri);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider("teamsBot.chatView", provider, {
+      webviewOptions: { retainContextWhenHidden: true }
+    })
   );
-
-  context.subscriptions.push(helloWorldCommand, chatView);
 }
 
-// This method is called when your extension is deactivated
 function deactivate() {}
 
-/**
- * Chat view provider for the sidebar
- */
 class ChatViewProvider {
   constructor(extensionUri) {
     this.extensionUri = extensionUri;
-    this.view = undefined;
+    this.view = null;
+    this.pendingTitle = null;
   }
 
   resolveWebviewView(webviewView) {
     this.view = webviewView;
-
     webviewView.webview.options = {
       enableScripts: true,
       localResourceRoots: [this.extensionUri]
     };
+    webviewView.webview.html = this._getHtml();
 
-    webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+    // Updated welcome message
+    webviewView.webview.postMessage({
+      command: 'receiveMessage',
+      text: `
+        <b>Welcome to Teams Bot!</b><br>
+        Here are some commands you can use:<br>
+        • <code>@create_ticket &lt;title&gt;</code> - Create a new ticket.<br>
+        • <code>@view_tickets</code> - View your open tickets.<br>
+        • <code>@view_tickets &lt;id&gt;</code> - View details of a specific ticket by ID.<br>
+        • <code>#&lt;id&gt; @comment &lt;comment text&gt;</code> - Add a comment to a specific ticket by ID.<br>
+        • <code>@help</code> - Get information about available commands.<br>
+        Feel free to ask me anything else!
+      `
+    });
 
-    // Handle messages from the webview
-    webviewView.webview.onDidReceiveMessage(
-      message => {
-        switch (message.command) {
-          case 'sendMessage':
-            this._handleUserMessage(message.text);
-            return;
-        }
+    webviewView.webview.onDidReceiveMessage(msg => {
+      if (msg.command === 'sendMessage') {
+        this._onUserMessage(msg.text.trim());
       }
-    );
+    });
   }
 
-  async _getUserEmail() {
-		try {
-			// Get the authentication session for the Microsoft provider
-			const session = await vscode.authentication.getSession('microsoft', ['email'], { createIfNone: true });
+  async _onUserMessage(text) {
+    try {
+      // Handle adding comments to a work item
+      const commentMatch = text.match(/^#(\d+)\s+@comment\s+(.+)/i);
+      if (commentMatch) {
+        const userEMail = await this._getEmail();
+        if(userEMail === null || !userEMail.includes("@shorthills.ai")) {
+          this._post('❌ You are not authorized to comment on tickets. Please check your Azure DevOps permissions.');
+          return;
+        }
+        const workItemId = parseInt(commentMatch[1], 10);
+        const commentText = commentMatch[2].trim();
+        await this._addCommentToWorkItem(workItemId, commentText);
+        return;
+      }
 
-			if (session) {
-				// Extract the email from the session's account information
-				const email = session.account.label;
-				console.log('User email:', email);
-				return email;
-			} else {
-				console.error('No authentication session found.');
-				return null;
-			}
-		} catch (error) {
-			console.error('Failed to retrieve user email:', error);
-			return null;
-		}
-	}
+      // Handle @view_tickets command with optional ID
+      const viewMatch = text.match(/^@view_tickets\s*(\d+)?$/i);
+      if (viewMatch) {
+        const userEMail = await this._getEmail();
+        if(userEMail === null || !userEMail.includes("@shorthills.ai")) {
+          this._post('❌ You are not authorized to view tickets. Please check your Azure DevOps permissions.');
+          return;
+        }
+        const workItemId = viewMatch[1] ? parseInt(viewMatch[1], 10) : null;
+        await this._showTickets(workItemId);
+        return;
+      }
 
+      // 1) Handle greetings
+      if (/^(hi|hello|hey)$/i.test(text)) {
+        this._post('Hello! How can I assist you today?');
+        return;
+      }
 
-  async _generateAzureTicketDescription(title) {
-	if (!title || typeof title !== 'string') {
-	  return 'Invalid ticket title provided.';
-	}
-  
-	try {
-	  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-  
-	  const prompt = `
+      // 2) Handle @help command
+      if (/^@help$/i.test(text)) {
+        this._post(`
+          <b>Here are the commands you can use:</b><br>
+          • <code>@create_ticket &lt;title&gt;</code> - Create a new ticket.<br>
+          • <code>@view_tickets</code> - View your open tickets.<br>
+          • <code>@view_tickets &lt;id&gt;</code> - View details of a specific ticket by ID.<br>
+          • <code>#&lt;id&gt; @comment &lt;comment text&gt;</code> - Add a comment to a specific ticket by ID.<br>
+          • <code>@help</code> - Get information about available commands.<br>
+          Feel free to ask me anything related to these commands!
+        `);
+        return;
+      }
+
+      // 3) Handle @create_ticket flow
+      if (this.pendingTitle) {
+        const description = text.trim();
+        if (description && !/^(skip|leave it blank|leave blank)$/i.test(description)) {
+          const structured = await this._structureDesc(description);
+          await this._makeTicket(this.pendingTitle, structured);
+        } else {
+          await this._makeTicket(this.pendingTitle, "");
+        }
+        this.pendingTitle = null;
+        return;
+      }
+
+      const createMatch = text.match(/^@create_ticket\s+(.+)/i);
+      if (createMatch) {
+        this.pendingTitle = createMatch[1].trim();
+        this._post(`Got it! Title: <b>${this.pendingTitle}</b><br>
+          Please describe what needs to be done in simple terms, or type "skip", "leave it blank", or "leave blank" to proceed without a description.`);
+        return;
+      }
+
+      // 4) Handle @view_tickets command
+      if (/^@view_tickets$/i.test(text)) {
+        await this._showTickets();
+        return;
+      }
+
+      // 5) Fallback for unrelated questions
+      this._post("I am sorry, I don't know the answer.");
+    } catch (error) {
+      console.error('Error handling user message:', error);
+      this._post(`❌ An error occurred: ${error.message}`);
+    }
+  }
+
+  async _structureDesc(layman) {
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const prompt = `
 			You are an assistant that helps write structured Azure DevOps tickets.
 
-			Given the title: "${title}"
+			Given that the user says: "${layman}"
 
 			Generate a response in formatted HTML (without wrapping it in \`\`\`html or any code block fences). Use the following structure:
 
@@ -124,294 +163,391 @@ class ChatViewProvider {
 			</ul>
 		`;
 
-  
-	  const result = await model.generateContent(prompt);
-	  const response = await result.response;
-	  const description = response.text().trim();
-  
-	  return description;
-	} catch (error) {
-	  console.error('Gemini Error:', error.message);
-	  return 'Failed to generate description.';
-	}
+    const res = await (await model.generateContent(prompt)).response;
+    return res.text().trim();
   }
 
-  async _handleUserMessage(text){
-
-	try {
-		// Replace the configuration values below with your actual values
-		const organization = process.env.ORG;  // e.g. 'Contoso'
-		const project = process.env.AZURE_PROJECT;            
-		const workItemType = 'Task';   
-		const personalAccessToken=process.env.AZURE_PAT;
-		const assignedTo = await this._getUserEmail(); // Get the user's email from the authentication session
-		// const assignedTo = process.env.ASSIGNED_TO; // Get the user's email from the authentication session
-
-
-		if(assignedTo === null || !assignedTo.includes('@shorthills.ai')){
-			if (this.view) {
-				this.view.webview.postMessage({ 
-					command: 'receiveMessage', 
-					text: "You are not authorized to create tickets in Azure DevOps."
-				});
-			}
-			return;
-		}
-		const description = await this._generateAzureTicketDescription(text);
-
-
-		if (!organization || !project || !personalAccessToken) {
-			throw new Error('Missing required environment variables: ORG, AZURE_PROJECT, AZURE_PAT');
-		}
-		
-		// Instantiate the AzureDevOpsClient
-		const client = new AzureDevOpsClient(organization, project, personalAccessToken);
-
-		const effort = process.env.DEFAULT_EFFORT || 4; // Default to 8 if not set
-		const priority = process.env.DEFAULT_PRIORITY || 1; // Default to 2 if not set
-		const activity = process.env.DEFAULT_ACTIVITY || "Development"; // Default to "Development" if not set
-
-		const patchDocument = [
-			{
-				"op": "add",
-				"path": "/fields/System.Title",
-				"value": `${text}`, // Title of the work item
-			},
-			{
-				"op": "add",
-				"path": "/fields/System.Description",
-				"value": `${description}`, // Description of the work item
-			},
-			{
-				"op": "add",
-				"path": "/fields/System.AssignedTo",
-				"value": assignedTo, // Assign the ticket to the specified user
-			},
-			{
-				"op": "add",
-				"path": "/fields/Microsoft.VSTS.Scheduling.OriginalEstimate",
-				"value": effort, // Set the Original Estimate (in hours)
-			},
-			{
-				"op": "add",
-				"path": "/fields/Microsoft.VSTS.Scheduling.CompletedWork",
-				"value": 0, // Set the Completed Work (default to 0)
-			},
-			{
-				"op": "add",
-				"path": "/fields/Microsoft.VSTS.Common.Priority",
-				"value": priority, // Set the Priority
-			},
-			{
-				"op": "add",
-				"path": "/fields/Microsoft.VSTS.Common.Activity",
-				"value": activity, // Set the Activity
-			}
-		];
-
-		console.log('Attempting to create a new work item in Azure DevOps...');
-		
-		// Call the createWorkItem() method which returns a promise.
-		const workItem = await client.createWorkItem(workItemType, patchDocument);
-		const message = `Work item created by ${assignedTo} successfully with ID: ${workItem.id} with title: ${text}`;
-		console.log(message);
-
-		const botResponse = `${message}`;
-    
-		// Send the bot's response back to the webview
-		if (this.view) {
-			this.view.webview.postMessage({ 
-				command: 'receiveMessage', 
-				text: botResponse 
-			});
-		}
-		// vscode.window.showInformationMessage(message);
-	} catch (error) {
-		console.error('Failed to create the work item:', error);
-
-		if (this.view) {
-			this.view.webview.postMessage({ 
-				command: 'receiveMessage', 
-				text: error.message
-			});
-		}
-
-
-
-		// vscode.window.showErrorMessage(`Failed to create work item: ${error.message}`);
-	}
-
+  async _makeTicket(title, htmlDesc) {
+    try {
+      const org = process.env.ORG, proj = process.env.AZURE_PROJECT, pat = process.env.AZURE_PAT;
+      if (!org || !proj || !pat) throw new Error('Missing ORG/AZURE_PROJECT/AZURE_PAT');
+      const email = await this._getEmail();
+      const client = new AzureDevOpsClient(org, proj, pat);
+      const patch = [
+        { op: 'add', path: '/fields/System.Title', value: title },
+        { op: 'add', path: '/fields/System.Description', value: htmlDesc },
+        { op: 'add', path: '/fields/System.AssignedTo', value: email },
+        { op: 'add', path: '/fields/Microsoft.VSTS.Scheduling.OriginalEstimate', value: process.env.DEFAULT_EFFORT || 4 },
+        { op: 'add', path: '/fields/Microsoft.VSTS.Common.Priority', value: process.env.DEFAULT_PRIORITY || 1 },
+        { op: 'add', path: '/fields/Microsoft.VSTS.Common.Activity', value: process.env.DEFAULT_ACTIVITY || 'Development' }
+      ];
+      const wi = await client.createWorkItem('Task', patch);
+      this._post(`✅ Created <b>#${wi.id}</b> "${title}"<br>${htmlDesc}`);
+    } catch (e) {
+      this._post(`❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`);
+    }
   }
 
-  _getHtmlForWebview() {
+  async _showTickets(workItemId = null) {
+    try {
+      const org = process.env.ORG, proj = process.env.AZURE_PROJECT, pat = process.env.AZURE_PAT;
+      const client = new AzureDevOpsClient(org, proj, pat);
+
+      if (workItemId) {
+        // Fetch details of a specific work item
+        const workItem = await client.getWorkItemDetails(workItemId);
+        if (!workItem) {
+          this._post(`❌ Work item with ID <b>${workItemId}</b> not found.`);
+          return;
+        }
+
+        // Fetch history and format the work item
+        const history = await this._getWorkItemHistory(workItemId);
+        const details = this._formatWorkItem(workItem, history);
+
+        this._post(details);
+      } else {
+        // Fetch all assigned work items
+        const email = await this._getEmail();
+        const items = await client.getAssignedWorkItems(email);
+        if (items.length === 0) {
+          this._post('You have no open tickets.');
+        } else {
+          const list = items.map(w => `<li>#${w.id} — ${w.fields['System.Title']}</li>`).join('');
+          this._post(`<b>Your Tickets:</b><ul>${list}</ul>`);
+        }
+      }
+    } catch (e) {
+      this._post(`❌ Couldn’t fetch tickets: ${e.message}`);
+    }
+  }
+
+  async _chatReply(msg) {
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    return (await (await model.generateContent(msg)).response).text().trim();
+  }
+
+  async _getEmail() {
+    try {
+      const session = await vscode.authentication.getSession('microsoft', ['email'], { createIfNone: true });
+      return session.account.label;
+    } catch {
+      return null;
+    }
+  }
+
+  _post(html) {
+    this.view?.webview.postMessage({ command: 'receiveMessage', text: html });
+  }
+
+  _getHtml() {
     return `<!DOCTYPE html>
     <html lang="en">
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Chat Bot</title>
+      <title>Teams Bot</title>
       <style>
         body {
-          font-family: var(--vscode-font-family);
+          font-family: var(--vscode-font-family, 'Segoe UI', sans-serif);
           color: var(--vscode-editor-foreground);
           background-color: var(--vscode-editor-background);
           padding: 0;
+          margin: 0;
           display: flex;
           flex-direction: column;
           height: 100vh;
-          margin: 0;
-          box-sizing: border-box;
         }
-        
+  
         #chat-container {
           display: flex;
           flex-direction: column;
-          flex-grow: 1;
-          overflow: hidden;
           height: 100%;
         }
-        
+  
         #messages {
           flex-grow: 1;
           overflow-y: auto;
-          padding: 10px;
+          padding: 16px;
           display: flex;
           flex-direction: column;
+          gap: 12px;
         }
-        
+  
         .message {
-          margin-bottom: 10px;
-          padding: 8px;
-          border-radius: 4px;
-          max-width: 85%;
+          padding: 10px 14px;
+          border-radius: 16px;
+          max-width: 75%;
           word-wrap: break-word;
+          font-size: 14px;
+          line-height: 1.4;
+          box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
         }
-        
+  
         .user-message {
           background-color: var(--vscode-badge-background);
           color: var(--vscode-badge-foreground);
           align-self: flex-end;
+          border-bottom-right-radius: 4px;
         }
-        
+  
         .bot-message {
           background-color: var(--vscode-editor-inactiveSelectionBackground);
           align-self: flex-start;
+          border-bottom-left-radius: 4px;
         }
-        
+  
         #input-container {
           display: flex;
-          padding: 10px;
+          padding: 10px 12px;
           border-top: 1px solid var(--vscode-input-border);
+          background-color: var(--vscode-editor-background);
         }
-        
+  
         #message-input {
           flex-grow: 1;
-          padding: 6px 8px;
-          margin-right: 8px;
+          padding: 8px 12px;
+          margin-right: 10px;
           border: 1px solid var(--vscode-input-border);
           background-color: var(--vscode-input-background);
           color: var(--vscode-input-foreground);
-          border-radius: 4px;
+          border-radius: 20px;
+          font-size: 14px;
         }
-        
+  
         button {
-          padding: 6px 12px;
+          padding: 8px 16px;
           background-color: var(--vscode-button-background);
           color: var(--vscode-button-foreground);
           border: none;
-          border-radius: 4px;
+          border-radius: 20px;
           cursor: pointer;
+          font-size: 14px;
+          margin-right: 8px;
         }
-        
+  
         button:hover {
           background-color: var(--vscode-button-hoverBackground);
         }
-        
-        .welcome-message {
-          text-align: center;
-          margin: 10px;
-          color: var(--vscode-descriptionForeground);
+  
+        #quick-actions {
+          display: flex;
+          padding: 10px 12px;
+          border-bottom: 1px solid var(--vscode-input-border);
+          background-color: var(--vscode-editor-background);
+          gap: 8px;
+          flex-wrap: wrap;
         }
       </style>
     </head>
     <body>
       <div id="chat-container">
-        <div id="messages">
-          <div class="welcome-message">Welcome to Hello Bot! Ask me anything.</div>
+        <div id="quick-actions">
+          <button class="quick-action" data-text="@view_tickets">View Tickets</button>
+          <button class="quick-action" data-text="@help">Help</button>
+          <button class="quick-action" data-text="@create_ticket">Create Ticket</button>
+          <button class="quick-action" data-text="#<id> @comment">Comment</button>
         </div>
+        <div id="messages"></div>
         <div id="input-container">
           <input type="text" id="message-input" placeholder="Type a message..." />
           <button id="send-button">Send</button>
         </div>
       </div>
-      
       <script>
         const vscode = acquireVsCodeApi();
         const messagesContainer = document.getElementById('messages');
         const messageInput = document.getElementById('message-input');
         const sendButton = document.getElementById('send-button');
-        
-        // Send a message when the send button is clicked
+        const quickActionButtons = document.querySelectorAll('.quick-action');
+  
         sendButton.addEventListener('click', sendMessage);
-        
-        // Also send a message when Enter is pressed in the input field
         messageInput.addEventListener('keypress', event => {
-          if (event.key === 'Enter') {
-            sendMessage();
-          }
+          if (event.key === 'Enter') sendMessage();
         });
-        
-        // Handle incoming messages from the extension
+  
+        quickActionButtons.forEach(button => {
+          button.addEventListener('click', () => {
+            const text = button.getAttribute('data-text');
+            messageInput.value = text;
+            messageInput.focus();
+          });
+        });
+  
         window.addEventListener('message', event => {
           const message = event.data;
-          
-          switch (message.command) {
-            case 'receiveMessage':
-              appendMessage(message.text, 'bot');
-              break;
-          }
+          if (message.command === 'receiveMessage') appendMessage(message.text, 'bot');
         });
-        
+  
         function sendMessage() {
           const text = messageInput.value.trim();
           if (text) {
-            // Display the user's message in the chat
             appendMessage(text, 'user');
-            
-            // Send the message to the extension
-            vscode.postMessage({
-              command: 'sendMessage',
-              text: text
-            });
-            
-            // Clear the input field
+            vscode.postMessage({ command: 'sendMessage', text });
             messageInput.value = '';
-            // Focus back on the input for convenience
-            messageInput.focus();
           }
         }
-        
+  
         function appendMessage(text, sender) {
           const messageElement = document.createElement('div');
-          messageElement.classList.add('message');
-          messageElement.classList.add(sender === 'user' ? 'user-message' : 'bot-message');
-          messageElement.textContent = text;
-          
+          messageElement.classList.add('message', sender === 'user' ? 'user-message' : 'bot-message');
+          messageElement.innerHTML = text;
           messagesContainer.appendChild(messageElement);
-          
-          // Scroll to the bottom
           messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
-        
-        // Focus on input field initially
-        messageInput.focus();
       </script>
     </body>
     </html>`;
+  }  
+
+  async _getWorkItemHistory(workItemId) {
+    try {
+      const org = process.env.ORG, proj = process.env.AZURE_PROJECT, pat = process.env.AZURE_PAT;
+      const client = new AzureDevOpsClient(org, proj, pat);
+      const updatesUrl = `${client.baseUrl}/wit/workitems/${workItemId}/updates?api-version=${client.apiVersion}`;
+      const response = await fetch(updatesUrl, { headers: client._getAuthHeader() });
+      if (!response.ok) throw new Error(`Failed to fetch history: ${response.status}`);
+      const data = await response.json();
+      return data.value || [];
+    } catch (error) {
+      console.error("Error fetching work item history:", error);
+      return [];
+    }
+  }
+
+  _formatWorkItem(workItem, history = []) {
+    const fields = workItem.fields || {};
+    let formattedInfo = `<b>📄 WORK ITEM DETAILS</b><br><br>`;
+
+    // Basic information
+    formattedInfo += `<b>ID:</b> ${workItem.id}<br>`;
+    formattedInfo += `<b>Title:</b> ${fields['System.Title'] || 'N/A'}<br>`;
+    formattedInfo += `<b>State:</b> ${fields['System.State'] || 'N/A'}<br>`;
+    formattedInfo += `<b>Type:</b> ${fields['System.WorkItemType'] || 'N/A'}<br>`;
+
+    // People
+    formattedInfo += `<b>Created By:</b> ${fields['System.CreatedBy']|| 'N/A'}<br>`;
+    formattedInfo += `<b>Assigned To:</b> ${fields['System.AssignedTo']|| 'N/A'}<br>`;
+
+    // Dates
+    const createdDate = fields['System.CreatedDate'] ? new Date(fields['System.CreatedDate']).toLocaleString() : 'N/A';
+    formattedInfo += `<b>Created Date:</b> ${createdDate}<br>`;
+
+    if (fields['System.ChangedDate']) {
+      const changedDate = new Date(fields['System.ChangedDate']).toLocaleString();
+      formattedInfo += `<b>Last Updated:</b> ${changedDate}<br>`;
+    }
+
+    // Priority and effort
+    if (fields['Microsoft.VSTS.Common.Priority']) {
+      formattedInfo += `<b>Priority:</b> ${fields['Microsoft.VSTS.Common.Priority']}<br>`;
+    }
+
+    if (fields['Microsoft.VSTS.Scheduling.StoryPoints']) {
+      formattedInfo += `<b>Story Points:</b> ${fields['Microsoft.VSTS.Scheduling.StoryPoints']}<br>`;
+    }
+
+    // Add iteration and area path if available
+    if (fields['System.IterationPath']) {
+      formattedInfo += `<b>Iteration Path:</b> ${fields['System.IterationPath']}<br>`;
+    }
+
+    if (fields['System.AreaPath']) {
+      formattedInfo += `<b>Area Path:</b> ${fields['System.AreaPath']}<br>`;
+    }
+
+    // Description
+    formattedInfo += `<br><b>Description:</b><br>`;
+    formattedInfo += fields['System.Description'] ? this._stripHtml(fields['System.Description']) : 'No description provided.';
+
+    // Acceptance Criteria
+    if (fields['Microsoft.VSTS.Common.AcceptanceCriteria']) {
+      formattedInfo += `<br><br><b>Acceptance Criteria:</b><br>`;
+      formattedInfo += this._stripHtml(fields['Microsoft.VSTS.Common.AcceptanceCriteria']);
+    }
+
+    // Links to related work items
+    if (workItem.relations && workItem.relations.length > 0) {
+      const relatedItems = workItem.relations.filter(rel =>
+        rel.rel === 'System.LinkTypes.Related' ||
+        rel.rel === 'System.LinkTypes.Child' ||
+        rel.rel === 'System.LinkTypes.Parent'
+      );
+
+      if (relatedItems.length > 0) {
+        formattedInfo += `<br><br><b>Related Items:</b><br>`;
+        relatedItems.forEach(item => {
+          const relationType = item.rel.split('.').pop();
+          const itemUrl = item.url;
+          const itemId = itemUrl.substring(itemUrl.lastIndexOf('/') + 1);
+          formattedInfo += `- ${relationType}: #${itemId}<br>`;
+        });
+      }
+    }
+
+    // Discussion
+    let hasDiscussion = false;
+    formattedInfo += `<br><br><b>Discussion:</b><br>`;
+
+    if (history && history.length > 0) {
+      const discussionEntries = history.filter(update =>
+        update.fields &&
+        (update.fields['System.History'] ||
+          update.fields['System.CommentCount'])
+      );
+
+      if (discussionEntries.length > 0) {
+        hasDiscussion = true;
+        discussionEntries.forEach(entry => {
+          if (entry.fields['System.History']) {
+            formattedInfo += `<br>📝 <b>${entry.revisedBy?.displayName || 'Unknown'}:</b><br>`;
+            formattedInfo += `${this._stripHtml(entry.fields['System.History'].newValue)}<br>`;
+          }
+        });
+      }
+    }
+
+    if (!hasDiscussion) {
+      formattedInfo += 'No comments or discussion found for this work item.';
+    }
+
+    return formattedInfo;
+  }
+
+  _stripHtml(html) {
+    if (!html) return '';
+    return html
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n\n')
+      .replace(/<li>/gi, '- ')
+      .replace(/<\/li>/gi, '\n')
+      .replace(/<\/h[1-6]>/gi, '\n')
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .trim();
+  }
+
+  async _addCommentToWorkItem(workItemId, commentText) {
+    try {
+      const org = process.env.ORG, proj = process.env.AZURE_PROJECT, pat = process.env.AZURE_PAT;
+      const client = new AzureDevOpsClient(org, proj, pat);
+
+      // Add the comment to the work item
+      const response = await client.addComment(workItemId, commentText);
+      if (response) {
+        this._post(`✅ Comment added to work item <b>#${workItemId}</b>: "${commentText}"`);
+      } else {
+        this._post(`❌ Failed to add comment to work item <b>#${workItemId}</b>.`);
+      }
+    } catch (error) {
+      console.error('Error adding comment to work item:', error);
+      this._post(`❌ An error occurred while adding the comment: ${error.message}`);
+    }
   }
 }
 
-module.exports = {
-  activate,
-  deactivate
-}
+module.exports = { activate, deactivate };
