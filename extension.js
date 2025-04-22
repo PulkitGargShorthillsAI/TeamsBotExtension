@@ -197,10 +197,10 @@ class ChatViewProvider {
       const org = process.env.ORG, proj = process.env.AZURE_PROJECT, pat = process.env.AZURE_PAT;
       const client = new AzureDevOpsClient(org, proj, pat);
       const email = await this._getEmail();
-        if(email === null) {
-          this._post(`❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`);
-          return;
-        }
+        if (email === null) {
+        this._post(`❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`);
+        return;
+      }
 
       if (workItemId) {
         // Fetch details of a specific work item
@@ -217,12 +217,14 @@ class ChatViewProvider {
         this._post(details);
       } else {
         // Fetch all assigned work items
-        
         const items = await client.getAssignedWorkItems(email);
         if (items.length === 0) {
           this._post('You have no open tickets.');
         } else {
-          const list = items.map(w => `<li>#${w.id} — ${w.fields['System.Title']}</li>`).join('');
+          const list = items.map(w => {
+            const workItemUrl = `https://dev.azure.com/${org}/${proj}/_workitems/edit/${w.id}`;
+            return `<li><a href="${workItemUrl}" target="_blank">#${w.id} — ${w.fields['System.Title']}</a></li>`;
+          }).join('');
           this._post(`<b>Your Tickets:</b><ul>${list}</ul>`);
         }
       }
