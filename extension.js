@@ -122,9 +122,10 @@ class ChatViewProvider {
         - @help: Provide help information about available commands.
         - @view_tickets: View all tickets assigned to the user.
         - @view_tickets <id>: View details of a specific ticket by ID.
-        - @create_ticket <title>: Create a new ticket with the given title.
         - @create_ticket <title> description "<description>": Create a new ticket with the given title and description.
         - #<id> @comment <comment text>: Add a comment to a specific ticket by ID.
+
+        In the create ticket command the description should be made based on the user's input and the title should be a short and to the point summary of the task.
 
         User message: "${userMessage}"
       `;
