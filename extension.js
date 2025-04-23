@@ -56,54 +56,69 @@ class ChatViewProvider {
     });
   }
 
+  _removeJsonWrapper(text) {
+    // Check if the text starts with ```json and ends with ```
+    if (text.startsWith("```json") && text.endsWith("```")) {
+      const lines = text.split("\n");
+      return lines.slice(1, -1).join("\n"); // Remove the first and last line
+    }
+    return text;
+  }
+  
+
   async _onUserMessage(text) {
     try {
-      // Use GEMINI to classify the user's input into a command
-      const command = await this._getCommandFromGemini(text);
+      // Use GEMINI to classify the user's input into multiple commands
+      const commands = await this._getCommandsFromGemini(text);
 
-      // Execute the command returned by GEMINI
-      if (command.startsWith('@create_ticket')) {
-        const match = command.match(/^@create_ticket\s+(.+?)(?:\s+description\s+"(.+)")?$/i);
-        if (match) {
-          const title = match[1].trim();
-          const description = match[2] ? match[2].trim() : null;
-          this.pendingTitle = title;
-          if (description) {
-            const structured = await this._structureDesc(description);
-            await this._makeTicket(title, structured);
-          } else {
-            this._post(`Got it! Title: <b>${title}</b><br>
-              Please describe what needs to be done in simple terms, or type "skip", "leave it blank", or "leave blank" to proceed without a description.`);
+      if (!commands || commands.length === 0) {
+        this._post("I couldn't understand your request. Please try again.");
+        return;
+      }
+
+      for (const command of commands) {
+        if (command.startsWith('@create_ticket')) {
+          const match = command.match(/^@create_ticket\s+(.+?)(?:\s+description\s+"(.+)")?$/i);
+          if (match) {
+            const title = match[1].trim();
+            const description = match[2] ? match[2].trim() : null;
+            this.pendingTitle = title;
+            if (description) {
+              const structured = await this._structureDesc(description);
+              await this._makeTicket(title, structured);
+            } else {
+              this._post(`Got it! Title: <b>${title}</b><br>
+                Please describe what needs to be done in simple terms, or type "skip", "leave it blank", or "leave blank" to proceed without a description.`);
+            }
           }
-          return;
+        } else if (command === '@help') {
+          this._post(`
+            <b>Here are the commands you can use:</b><br>
+            • <code>@create_ticket &lt;title&gt;</code> - Create a new ticket.<br>
+            • <code>@view_tickets</code> - View your open tickets.<br>
+            • <code>@view_tickets &lt;id&gt;</code> - View details of a specific ticket by ID.<br>
+            • <code>#&lt;id&gt; @comment &lt;comment text&gt;</code> - Add a comment to a specific ticket by ID.<br>
+            • <code>@help</code> - Get information about available commands.<br>
+            Feel free to ask me anything related to these commands!
+          `);
+        } else if (command === '@view_tickets') {
+          await this._showTickets();
+        } else if (command.startsWith('@view_tickets')) {
+          const match = command.match(/^@view_tickets\s+(\d+)$/i);
+          if (match) {
+            const workItemId = parseInt(match[1], 10);
+            await this._showTickets(workItemId);
+          }
+        } else if (command.startsWith('#') && command.includes('@comment')) {
+          const match = command.match(/^#(\d+)\s+@comment\s+(.+)/i);
+          if (match) {
+            const workItemId = parseInt(match[1], 10);
+            const commentText = match[2].trim();
+            await this._addCommentToWorkItem(workItemId, commentText);
+          }
+        } else {
+          this._post(`I couldn't understand the command: ${command}`);
         }
-      } else if (command === '@help') {
-        this._post(`
-          <b>Here are the commands you can use:</b><br>
-          • <code>@create_ticket &lt;title&gt;</code> - Create a new ticket.<br>
-          • <code>@view_tickets</code> - View your open tickets.<br>
-          • <code>@view_tickets &lt;id&gt;</code> - View details of a specific ticket by ID.<br>
-          • <code>#&lt;id&gt; @comment &lt;comment text&gt;</code> - Add a comment to a specific ticket by ID.<br>
-          • <code>@help</code> - Get information about available commands.<br>
-          Feel free to ask me anything related to these commands!
-        `);
-      } else if (command === '@view_tickets') {
-        await this._showTickets();
-      } else if (command.startsWith('@view_tickets')) {
-        const match = command.match(/^@view_tickets\s+(\d+)$/i);
-        if (match) {
-          const workItemId = parseInt(match[1], 10);
-          await this._showTickets(workItemId);
-        }
-      } else if (command.startsWith('#') && command.includes('@comment')) {
-        const match = command.match(/^#(\d+)\s+@comment\s+(.+)/i);
-        if (match) {
-          const workItemId = parseInt(match[1], 10);
-          const commentText = match[2].trim();
-          await this._addCommentToWorkItem(workItemId, commentText);
-        }
-      } else {
-        this._post("I am sorry, I don't know the answer.");
       }
     } catch (error) {
       console.error('Error handling user message:', error);
@@ -111,30 +126,34 @@ class ChatViewProvider {
     }
   }
 
-  async _getCommandFromGemini(userMessage) {
+  async _getCommandsFromGemini(userMessage) {
     try {
       const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
       const prompt = `
-        You are an intelligent assistant that interprets user messages and maps them to predefined commands.
-        Based on the user's message, return
+      You are an intelligent assistant that interprets user messages and maps them to predefined commands.
+      If the user provides multiple commands in one message, split them into separate commands.
 
-        Available commands:
-        - @help: Provide help information about available commands.
-        - @view_tickets: View all tickets assigned to the user.
-        - @view_tickets <id>: View details of a specific ticket by ID.
-        - @create_ticket <title> description "<description>": Create a new ticket with the given title and description.
-        - #<id> @comment <comment text>: Add a comment to a specific ticket by ID.
+      Available commands:
+      - @help: Provide help information about available commands.
+      - @view_tickets: View all tickets assigned to the user.
+      - @view_tickets <id>: View details of a specific ticket by ID.
+      - @create_ticket <title> description "<description>": Create a new ticket with the given title and description.
+      - #<id> @comment <comment text>: Add a comment to a specific ticket by ID.
 
-        In the create ticket command the description should be made based on the user's input and the title should be a short and to the point summary of the task.
+      User message: "${userMessage}"
 
-        User message: "${userMessage}"
-      `;
+      Return only the commands as a JSON array. Do not include any additional text or explanation. Example:
+      ["@view_tickets", "#1269 @comment good job"]
+    `;
 
       const response = await model.generateContent(prompt);
-      console.log('GEMINI response:', response.response.text());
-      return response.response.text().trim();
+      console.log(response.response.text());
+
+      
+      const commands = JSON.parse(this._removeJsonWrapper(response.response.text().trim()));
+      return commands;
     } catch (error) {
-      console.error('Error fetching command from GEMINI:', error);
+      console.error('Error fetching commands from GEMINI:', error);
       return null; // Return null if GEMINI fails
     }
   }
@@ -194,8 +213,6 @@ class ChatViewProvider {
 
   async _showTickets(workItemId = null) {
     try {
-      // console.log(this._getProjects());
-      // console.log(this._getOrganizations());
       
       const org = process.env.ORG, proj = process.env.AZURE_PROJECT, pat = process.env.AZURE_PAT;
       const client = new AzureDevOpsClient(org, proj, pat);
@@ -675,6 +692,84 @@ class ChatViewProvider {
     } catch (error) {
       console.error('Error fetching organizations:', error);
       this._post(`❌ Error fetching organizations: ${error.message}`);
+    }
+  }
+
+
+
+
+
+
+
+  async _getTeamMembers() {
+    try {
+      const org = process.env.ORG;
+      const proj = process.env.AZURE_PROJECT;
+      const pat = process.env.AZURE_PAT;
+  
+      if (!org || !proj || !pat) {
+        throw new Error('Missing ORG, AZURE_PROJECT, or AZURE_PAT in environment variables.');
+      }
+  
+      const authHeader = {
+        Authorization: `Basic ${Buffer.from(`:${pat}`).toString('base64')}`
+      };
+  
+      // Step 1: Fetch all teams in the project
+      const teamsUrl = `https://dev.azure.com/${org}/${proj}/_apis/teams?api-version=7.1-preview.3`;
+      const teamsResponse = await fetch(teamsUrl, { headers: authHeader });
+  
+      if (!teamsResponse.ok) {
+        const errorText = await teamsResponse.text();
+        throw new Error(`Failed to fetch teams: ${teamsResponse.status} ${teamsResponse.statusText} - ${errorText}`);
+      }
+  
+      const teamsData = await teamsResponse.json();
+      const teams = teamsData.value;
+  
+      if (!teams || teams.length === 0) {
+        console.log('No teams found in the project.');
+        this._post('No teams found in the project.');
+        return;
+      }
+  
+      const members = [];
+  
+      // Step 2: Fetch members of each team
+      for (const team of teams) {
+        const membersUrl = `https://dev.azure.com/${org}/_apis/teams/${team.id}/members?api-version=7.1-preview.1`;
+        const membersResponse = await fetch(membersUrl, { headers: authHeader });
+  
+        if (!membersResponse.ok) {
+          const errorText = await membersResponse.text();
+          console.error(`Failed to fetch members for team ${team.name}: ${membersResponse.status} ${errorText}`);
+          continue;
+        }
+  
+        const membersData = await membersResponse.json();
+        members.push(
+          ...membersData.value.map(member => ({
+            team: team.name,
+            id: member.id,
+            displayName: member.displayName,
+            uniqueName: member.uniqueName
+          }))
+        );
+      }
+  
+      if (members.length === 0) {
+        console.log('No members found in the project.');
+        this._post('No members found in the project.');
+      } else {
+        console.log('Project Members:', members);
+        const memberList = members
+          .map(member => `<li>${member.displayName} (${member.uniqueName}) - Team: ${member.team}</li>`)
+          .join('');
+        this._post(`<b>Project Members:</b><ul>${memberList}</ul>`);
+      }
+    } catch (error) {
+      console.error('Error fetching team members:', error);
+      this._post(`❌ Error fetching team members: ${error.message}`);
     }
   }
 }
