@@ -56,87 +56,105 @@ class ChatViewProvider {
     });
   }
 
+  _removeJsonWrapper(text) {
+    // Check if the text starts with ```json and ends with ```
+    if (text.startsWith("```json") && text.endsWith("```")) {
+      const lines = text.split("\n");
+      return lines.slice(1, -1).join("\n"); // Remove the first and last line
+    }
+    return text;
+  }
+  
+
   async _onUserMessage(text) {
     try {
-      // Handle adding comments to a work item
-      const commentMatch = text.match(/^#(\d+)\s+@comment\s+(.+)/i);
-      if (commentMatch) {
-        const userEMail = await this._getEmail();
-        if(userEMail === null || !userEMail.includes("@shorthills.ai")) {
-          this._post('❌ You are not authorized to comment on tickets. Please check your Azure DevOps permissions.');
-          return;
-        }
-        const workItemId = parseInt(commentMatch[1], 10);
-        const commentText = commentMatch[2].trim();
-        await this._addCommentToWorkItem(workItemId, commentText);
+      // Use GEMINI to classify the user's input into multiple commands
+      const commands = await this._getCommandsFromGemini(text);
+
+      if (!commands || commands.length === 0) {
+        this._post("I couldn't understand your request. Please try again.");
         return;
       }
 
-      // Handle @view_tickets command with optional ID
-      const viewMatch = text.match(/^@view_tickets\s*(\d+)?$/i);
-      if (viewMatch) {
-        const userEMail = await this._getEmail();
-        if(userEMail === null || !userEMail.includes("@shorthills.ai")) {
-          this._post('❌ You are not authorized to view tickets. Please check your Azure DevOps permissions.');
-          return;
-        }
-        const workItemId = viewMatch[1] ? parseInt(viewMatch[1], 10) : null;
-        await this._showTickets(workItemId);
-        return;
-      }
-
-      // 1) Handle greetings
-      if (/^(hi|hello|hey)$/i.test(text)) {
-        this._post('Hello! How can I assist you today?');
-        return;
-      }
-
-      // 2) Handle @help command
-      if (/^@help$/i.test(text)) {
-        this._post(`
-          <b>Here are the commands you can use:</b><br>
-          • <code>@create_ticket &lt;title&gt;</code> - Create a new ticket.<br>
-          • <code>@view_tickets</code> - View your open tickets.<br>
-          • <code>@view_tickets &lt;id&gt;</code> - View details of a specific ticket by ID.<br>
-          • <code>#&lt;id&gt; @comment &lt;comment text&gt;</code> - Add a comment to a specific ticket by ID.<br>
-          • <code>@help</code> - Get information about available commands.<br>
-          Feel free to ask me anything related to these commands!
-        `);
-        return;
-      }
-
-      // 3) Handle @create_ticket flow
-      if (this.pendingTitle) {
-        const description = text.trim();
-        if (description && !/^(skip|leave it blank|leave blank)$/i.test(description)) {
-          const structured = await this._structureDesc(description);
-          await this._makeTicket(this.pendingTitle, structured);
+      for (const command of commands) {
+        if (command.startsWith('@create_ticket')) {
+          const match = command.match(/^@create_ticket\s+(.+?)(?:\s+description\s+"(.+)")?$/i);
+          if (match) {
+            const title = match[1].trim();
+            const description = match[2] ? match[2].trim() : null;
+            this.pendingTitle = title;
+            if (description) {
+              const structured = await this._structureDesc(description);
+              await this._makeTicket(title, structured);
+            } else {
+              this._post(`Got it! Title: <b>${title}</b><br>
+                Please describe what needs to be done in simple terms, or type "skip", "leave it blank", or "leave blank" to proceed without a description.`);
+            }
+          }
+        } else if (command === '@help') {
+          this._post(`
+            <b>Here are the commands you can use:</b><br>
+            • <code>@create_ticket &lt;title&gt;</code> - Create a new ticket.<br>
+            • <code>@view_tickets</code> - View your open tickets.<br>
+            • <code>@view_tickets &lt;id&gt;</code> - View details of a specific ticket by ID.<br>
+            • <code>#&lt;id&gt; @comment &lt;comment text&gt;</code> - Add a comment to a specific ticket by ID.<br>
+            • <code>@help</code> - Get information about available commands.<br>
+            Feel free to ask me anything related to these commands!
+          `);
+        } else if (command === '@view_tickets') {
+          await this._showTickets();
+        } else if (command.startsWith('@view_tickets')) {
+          const match = command.match(/^@view_tickets\s+(\d+)$/i);
+          if (match) {
+            const workItemId = parseInt(match[1], 10);
+            await this._showTickets(workItemId);
+          }
+        } else if (command.startsWith('#') && command.includes('@comment')) {
+          const match = command.match(/^#(\d+)\s+@comment\s+(.+)/i);
+          if (match) {
+            const workItemId = parseInt(match[1], 10);
+            const commentText = match[2].trim();
+            await this._addCommentToWorkItem(workItemId, commentText);
+          }
         } else {
-          await this._makeTicket(this.pendingTitle, "");
+          this._post(`I couldn't understand the command: ${command}`);
         }
-        this.pendingTitle = null;
-        return;
       }
-
-      const createMatch = text.match(/^@create_ticket\s+(.+)/i);
-      if (createMatch) {
-        this.pendingTitle = createMatch[1].trim();
-        this._post(`Got it! Title: <b>${this.pendingTitle}</b><br>
-          Please describe what needs to be done in simple terms, or type "skip", "leave it blank", or "leave blank" to proceed without a description.`);
-        return;
-      }
-
-      // 4) Handle @view_tickets command
-      if (/^@view_tickets$/i.test(text)) {
-        await this._showTickets();
-        return;
-      }
-
-      // 5) Fallback for unrelated questions
-      this._post("I am sorry, I don't know the answer.");
     } catch (error) {
       console.error('Error handling user message:', error);
       this._post(`❌ An error occurred: ${error.message}`);
+    }
+  }
+
+  async _getCommandsFromGemini(userMessage) {
+    try {
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+      const prompt = `
+      You are an intelligent assistant that interprets user messages and maps them to predefined commands.
+      If the user provides multiple commands in one message, split them into separate commands.
+
+      Available commands:
+      - @help: Provide help information about available commands.
+      - @view_tickets: View all tickets assigned to the user.
+      - @view_tickets <id>: View details of a specific ticket by ID.
+      - @create_ticket <title> description "<description>": Create a new ticket with the given title and description.
+      - #<id> @comment <comment text>: Add a comment to a specific ticket by ID.
+
+      User message: "${userMessage}"
+
+      Return only the commands as a JSON array. Do not include any additional text or explanation. Example:
+      ["@view_tickets", "#1269 @comment good job"]
+    `;
+
+      const response = await model.generateContent(prompt);
+      console.log(response.response.text());
+
+      
+      const commands = JSON.parse(this._removeJsonWrapper(response.response.text().trim()));
+      return commands;
+    } catch (error) {
+      console.error('Error fetching commands from GEMINI:', error);
+      return null; // Return null if GEMINI fails
     }
   }
 
@@ -172,6 +190,11 @@ class ChatViewProvider {
       const org = process.env.ORG, proj = process.env.AZURE_PROJECT, pat = process.env.AZURE_PAT;
       if (!org || !proj || !pat) throw new Error('Missing ORG/AZURE_PROJECT/AZURE_PAT');
       const email = await this._getEmail();
+
+      if(email === null) {
+        this._post(`❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`);
+        return;
+      }
       const client = new AzureDevOpsClient(org, proj, pat);
       const patch = [
         { op: 'add', path: '/fields/System.Title', value: title },
@@ -190,8 +213,14 @@ class ChatViewProvider {
 
   async _showTickets(workItemId = null) {
     try {
+      
       const org = process.env.ORG, proj = process.env.AZURE_PROJECT, pat = process.env.AZURE_PAT;
       const client = new AzureDevOpsClient(org, proj, pat);
+      const email = await this._getEmail();
+        if (email === null) {
+        this._post(`❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`);
+        return;
+      }
 
       if (workItemId) {
         // Fetch details of a specific work item
@@ -208,12 +237,14 @@ class ChatViewProvider {
         this._post(details);
       } else {
         // Fetch all assigned work items
-        const email = await this._getEmail();
         const items = await client.getAssignedWorkItems(email);
         if (items.length === 0) {
           this._post('You have no open tickets.');
         } else {
-          const list = items.map(w => `<li>#${w.id} — ${w.fields['System.Title']}</li>`).join('');
+          const list = items.map(w => {
+            const workItemUrl = `https://dev.azure.com/${org}/${proj}/_workitems/edit/${w.id}`;
+            return `<li><a href="${workItemUrl}" target="_blank">#${w.id} — ${w.fields['System.Title']}</a></li>`;
+          }).join('');
           this._post(`<b>Your Tickets:</b><ul>${list}</ul>`);
         }
       }
@@ -230,6 +261,9 @@ class ChatViewProvider {
   async _getEmail() {
     try {
       const session = await vscode.authentication.getSession('microsoft', ['email'], { createIfNone: true });
+      if(session.account && session.account.label && !session.account.label.endsWith('@shorthills.ai')) {
+        return null;
+      }
       return session.account.label;
     } catch {
       return null;
@@ -536,6 +570,13 @@ class ChatViewProvider {
       const org = process.env.ORG, proj = process.env.AZURE_PROJECT, pat = process.env.AZURE_PAT;
       const client = new AzureDevOpsClient(org, proj, pat);
 
+      const email = await this._getEmail();
+
+      if(email === null) {
+        this._post(`❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`);
+        return;
+      }
+
       // Add the comment to the work item
       const response = await client.addComment(workItemId, commentText);
       if (response) {
@@ -546,6 +587,189 @@ class ChatViewProvider {
     } catch (error) {
       console.error('Error adding comment to work item:', error);
       this._post(`❌ An error occurred while adding the comment: ${error.message}`);
+    }
+  }
+
+
+  async _getProjects() {
+    try {
+      const org = process.env.ORG;
+      const pat = process.env.AZURE_PAT;
+  
+      if (!org || !pat) {
+        throw new Error('Missing ORG or AZURE_PAT in environment variables.');
+      }
+  
+      const url = `https://dev.azure.com/${org}/_apis/projects?api-version=7.1-preview.4`;
+      const authHeader = {
+        Authorization: `Basic ${Buffer.from(`:${pat}`).toString('base64')}`
+      };
+  
+      const response = await fetch(url, { headers: authHeader });
+  
+      if (!response.ok) {
+        throw new Error(`Failed to fetch projects: ${response.status} ${response.statusText}`);
+      }
+  
+      const data = await response.json();
+      const projects = data.value;
+  
+      if (projects.length === 0) {
+        console.log('No projects found.');
+        this._post('No projects found.');
+      } else {
+        console.log('Projects:');
+        projects.forEach(project => {
+          console.log(`- ${project.name}`);
+        });
+  
+        const projectList = projects.map(project => `<li>${project.name}</li>`).join('');
+        this._post(`<b>Your Projects:</b><ul>${projectList}</ul>`);
+      }
+    } catch (error) {
+      console.error('Error fetching projects:', error);
+      this._post(`❌ Error fetching projects: ${error.message}`);
+    }
+  }
+
+
+
+
+
+
+  async _getOrganizations() {
+    try {
+      const pat = process.env.AZURE_PAT;
+  
+      if (!pat) {
+        throw new Error('Missing AZURE_PAT in environment variables.');
+      }
+  
+      // Step 1: Fetch the user's profile to get the memberId
+      const profileUrl = `https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1-preview.1`;
+      const authHeader = {
+        Authorization: `Basic ${Buffer.from(`:${pat}`).toString('base64')}`
+      };
+  
+      const profileResponse = await fetch(profileUrl, { headers: authHeader });
+  
+      if (!profileResponse.ok) {
+        const errorText = await profileResponse.text();
+        throw new Error(`Failed to fetch user profile: ${profileResponse.status} ${profileResponse.statusText} - ${errorText}`);
+      }
+  
+      const profileData = await profileResponse.json();
+      const memberId = profileData.id;
+  
+      if (!memberId) {
+        throw new Error('Failed to retrieve memberId from user profile.');
+      }
+  
+      // Step 2: Fetch the organizations using the memberId
+      const orgsUrl = `https://app.vssps.visualstudio.com/_apis/accounts?memberId=${memberId}&api-version=7.1-preview.1`;
+      const orgsResponse = await fetch(orgsUrl, { headers: authHeader });
+  
+      if (!orgsResponse.ok) {
+        const errorText = await orgsResponse.text();
+        throw new Error(`Failed to fetch organizations: ${orgsResponse.status} ${orgsResponse.statusText} - ${errorText}`);
+      }
+  
+      const orgsData = await orgsResponse.json();
+      const organizations = orgsData.value;
+  
+      if (!organizations || organizations.length === 0) {
+        console.log('No organizations found.');
+        this._post('No organizations found.');
+      } else {
+        console.log('Organizations:');
+        organizations.forEach(org => {
+          console.log(`- ${org.accountName}`);
+        });
+  
+        const orgList = organizations.map(org => `<li>${org.accountName}</li>`).join('');
+        this._post(`<b>Your Organizations:</b><ul>${orgList}</ul>`);
+      }
+    } catch (error) {
+      console.error('Error fetching organizations:', error);
+      this._post(`❌ Error fetching organizations: ${error.message}`);
+    }
+  }
+
+
+
+
+
+
+
+  async _getTeamMembers() {
+    try {
+      const org = process.env.ORG;
+      const proj = process.env.AZURE_PROJECT;
+      const pat = process.env.AZURE_PAT;
+  
+      if (!org || !proj || !pat) {
+        throw new Error('Missing ORG, AZURE_PROJECT, or AZURE_PAT in environment variables.');
+      }
+  
+      const authHeader = {
+        Authorization: `Basic ${Buffer.from(`:${pat}`).toString('base64')}`
+      };
+  
+      // Step 1: Fetch all teams in the project
+      const teamsUrl = `https://dev.azure.com/${org}/${proj}/_apis/teams?api-version=7.1-preview.3`;
+      const teamsResponse = await fetch(teamsUrl, { headers: authHeader });
+  
+      if (!teamsResponse.ok) {
+        const errorText = await teamsResponse.text();
+        throw new Error(`Failed to fetch teams: ${teamsResponse.status} ${teamsResponse.statusText} - ${errorText}`);
+      }
+  
+      const teamsData = await teamsResponse.json();
+      const teams = teamsData.value;
+  
+      if (!teams || teams.length === 0) {
+        console.log('No teams found in the project.');
+        this._post('No teams found in the project.');
+        return;
+      }
+  
+      const members = [];
+  
+      // Step 2: Fetch members of each team
+      for (const team of teams) {
+        const membersUrl = `https://dev.azure.com/${org}/_apis/teams/${team.id}/members?api-version=7.1-preview.1`;
+        const membersResponse = await fetch(membersUrl, { headers: authHeader });
+  
+        if (!membersResponse.ok) {
+          const errorText = await membersResponse.text();
+          console.error(`Failed to fetch members for team ${team.name}: ${membersResponse.status} ${errorText}`);
+          continue;
+        }
+  
+        const membersData = await membersResponse.json();
+        members.push(
+          ...membersData.value.map(member => ({
+            team: team.name,
+            id: member.id,
+            displayName: member.displayName,
+            uniqueName: member.uniqueName
+          }))
+        );
+      }
+  
+      if (members.length === 0) {
+        console.log('No members found in the project.');
+        this._post('No members found in the project.');
+      } else {
+        console.log('Project Members:', members);
+        const memberList = members
+          .map(member => `<li>${member.displayName} (${member.uniqueName}) - Team: ${member.team}</li>`)
+          .join('');
+        this._post(`<b>Project Members:</b><ul>${memberList}</ul>`);
+      }
+    } catch (error) {
+      console.error('Error fetching team members:', error);
+      this._post(`❌ Error fetching team members: ${error.message}`);
     }
   }
 }
