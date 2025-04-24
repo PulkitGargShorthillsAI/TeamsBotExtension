@@ -1,6 +1,7 @@
 // extension.js
 const vscode = require('vscode');
 const path = require('path');
+const MySQLClient = require('./backend/server');
 require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const AzureDevOpsClient = require('./azureDevOpsClient');
@@ -192,7 +193,7 @@ class ChatViewProvider {
 
   async _makeTicket(title, htmlDesc, organization, project) {
     try {
-      const org = organization, proj = project, pat = process.env.AZURE_PAT;
+      const org = organization, proj = project, pat = await this._getPatToken();
       if (!org || !proj || !pat) throw new Error('Missing ORG/AZURE_PROJECT/AZURE_PAT');
       const email = await this._getEmail();
 
@@ -219,7 +220,10 @@ class ChatViewProvider {
   async _showTickets(organization, project, workItemId = null) {
     try {
       
-      const org = organization, proj = project, pat = process.env.AZURE_PAT;
+      console.log("Inside showTickets");
+      const org = organization, proj = project, pat = await this._getPatToken();
+
+      
       const client = new AzureDevOpsClient(org, proj, pat);
       const email = await this._getEmail();
         if (email === null) {
@@ -663,7 +667,7 @@ class ChatViewProvider {
 
   async _getProjects(organizationName) {
     try {
-      const pat = process.env.AZURE_PAT;
+      const pat = await this._getPatToken();
       if (!organizationName || !pat) throw new Error('Missing organization name or AZURE_PAT.');
   
       const url = `https://dev.azure.com/${organizationName}/_apis/projects?api-version=7.1-preview.4`;
@@ -687,7 +691,7 @@ class ChatViewProvider {
 
   async _getOrganizations() {
     try {
-      const pat = process.env.AZURE_PAT;
+      const pat = await this._getPatToken();
       if (!pat) throw new Error('Missing AZURE_PAT in environment variables.');
   
       const profileUrl = `https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1-preview.1`;
@@ -786,6 +790,42 @@ class ChatViewProvider {
     } catch (error) {
       console.error('Error fetching team members:', error);
       this._post(`❌ Error fetching team members: ${error.message}`);
+    }
+  }
+
+
+
+  async _getPatToken() {
+    try {
+      const email = await this._getEmail();
+
+      if (!email) {
+        this._post('❌ Please log in to your Azure DevOps account to retrieve the PAT token.');
+        return null;
+      }
+      
+      let patToken = await MySQLClient.getPatToken(email);
+      
+      if (!patToken) {
+        // Prompt the user to enter the PAT token
+        patToken = await vscode.window.showInputBox({
+          prompt: 'Enter your Azure DevOps PAT token',
+          password: true
+        });
+
+        if (!patToken) {
+          throw new Error('PAT token is required.');
+        }
+
+        // Store the PAT token in the database
+        await MySQLClient.storePatToken(email, patToken);
+        vscode.window.showInformationMessage('PAT token stored successfully.');
+      }
+      return patToken;
+    } catch (error) {
+      console.error('Error fetching PAT token:', error);
+      vscode.window.showErrorMessage('Failed to retrieve or store PAT token.');
+      return null;
     }
   }
 }
