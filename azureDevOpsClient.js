@@ -1,12 +1,12 @@
 // azureDevOpsClient.js
 let fetch; // will be dynamically imported
+const { getOAuthToken } = require('./auth/oauth'); // Import OAuth token manager
 
 class AzureDevOpsClient {
-  constructor(organization, project, personalAccessToken, apiVersion = '7.1') {
+  constructor(organization, project, apiVersion = '7.1') {
     this.organization = organization;
     this.project = project;
     this.apiVersion = apiVersion;
-    this.personalAccessToken = personalAccessToken;
     this.baseUrl = `https://dev.azure.com/${this.organization}/${this.project}/_apis`;
   }
 
@@ -16,9 +16,9 @@ class AzureDevOpsClient {
     }
   }
 
-  _getAuthHeader() {
-    const encoded = Buffer.from(`:${this.personalAccessToken}`).toString('base64');
-    return { "Authorization": `Basic ${encoded}` };
+  async _getAuthHeader() {
+    const token = await getOAuthToken(); // Retrieve the OAuth token
+    return { Authorization: `Bearer ${token}` };
   }
 
   async createWorkItem(workItemType, patchDocument) {
@@ -26,7 +26,7 @@ class AzureDevOpsClient {
     const url = `${this.baseUrl}/wit/workitems/$${workItemType}?api-version=${this.apiVersion}`;
     const headers = {
       "Content-Type": "application/json-patch+json",
-      ...this._getAuthHeader()
+      ...await this._getAuthHeader()
     };
     const res = await fetch(url, {
       method: 'PATCH',
@@ -62,7 +62,7 @@ class AzureDevOpsClient {
       method: 'POST',
       headers: {
         "Content-Type": "application/json",
-        ...this._getAuthHeader()
+        ...await this._getAuthHeader()
       },
       body: JSON.stringify(wiqlBody)
     });
@@ -77,7 +77,7 @@ class AzureDevOpsClient {
     // 2) Batch‑fetch the details
     const batchUrl = `${this.baseUrl}/wit/workitems?ids=${ids.join(',')}&api-version=${this.apiVersion}`;
     const batchRes = await fetch(batchUrl, {
-      headers: this._getAuthHeader()
+      headers: await this._getAuthHeader()
     });
     if (!batchRes.ok) {
       const t = await batchRes.text();
@@ -91,7 +91,7 @@ class AzureDevOpsClient {
     await this._loadFetch();
     const url = `${this.baseUrl}/wit/workitems/${workItemId}?$expand=all&api-version=${this.apiVersion}`;
     const res = await fetch(url, {
-      headers: this._getAuthHeader()
+      headers: await this._getAuthHeader()
     });
     if (!res.ok) {
       if (res.status === 404) return null; // Work item not found
@@ -109,7 +109,7 @@ class AzureDevOpsClient {
     // Fetch comments if available
     const commentsUrl = `${this.baseUrl}/wit/workitems/${workItemId}/comments?api-version=${this.apiVersion}`;
     const commentsRes = await fetch(commentsUrl, {
-      headers: this._getAuthHeader()
+      headers: await this._getAuthHeader()
     });
     if (commentsRes.ok) {
       const commentsData = await commentsRes.json();
@@ -134,7 +134,7 @@ class AzureDevOpsClient {
       method: 'POST',
       headers: {
         "Content-Type": "application/json",
-        ...this._getAuthHeader()
+        ...await this._getAuthHeader()
       },
       body: JSON.stringify(body)
     });

@@ -200,7 +200,7 @@ class ChatViewProvider {
         this._post(`❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`);
         return;
       }
-      const client = new AzureDevOpsClient(org, proj, pat);
+      const client = new AzureDevOpsClient(org, proj);
       const patch = [
         { op: 'add', path: '/fields/System.Title', value: title },
         { op: 'add', path: '/fields/System.Description', value: htmlDesc },
@@ -220,7 +220,7 @@ class ChatViewProvider {
     try {
       
       const org = organization, proj = project, pat = process.env.AZURE_PAT;
-      const client = new AzureDevOpsClient(org, proj, pat);
+      const client = new AzureDevOpsClient(org, proj);
       const email = await this._getEmail();
         if (email === null) {
         this._post(`❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`);
@@ -266,7 +266,7 @@ class ChatViewProvider {
   async _getEmail() {
     try {
       const session = await vscode.authentication.getSession('microsoft', ['email'], { createIfNone: true });
-      if(session.account && session.account.label && !session.account.label.endsWith('@shorthills.ai')) {
+      if (session.account && session.account.label && !session.account.label.endsWith('@shorthills.ai')) {
         return null;
       }
       return session.account.label;
@@ -507,7 +507,7 @@ class ChatViewProvider {
   async _getWorkItemHistory(organization,project,workItemId) {
     try {
       const org = organization, proj = project, pat = process.env.AZURE_PAT;
-      const client = new AzureDevOpsClient(org, proj, pat);
+      const client = new AzureDevOpsClient(org, proj);
       const updatesUrl = `${client.baseUrl}/wit/workitems/${workItemId}/updates?api-version=${client.apiVersion}`;
       const response = await fetch(updatesUrl, { headers: client._getAuthHeader() });
       if (!response.ok) throw new Error(`Failed to fetch history: ${response.status}`);
@@ -638,7 +638,7 @@ class ChatViewProvider {
   async _addCommentToWorkItem(workItemId, commentText, organization, project) {
     try {
       const org = organization, proj = project, pat = process.env.AZURE_PAT;
-      const client = new AzureDevOpsClient(org, proj, pat);
+      const client = new AzureDevOpsClient(org, proj);
 
       const email = await this._getEmail();
 
@@ -687,22 +687,23 @@ class ChatViewProvider {
 
   async _getOrganizations() {
     try {
-      const pat = process.env.AZURE_PAT;
-      if (!pat) throw new Error('Missing AZURE_PAT in environment variables.');
-  
+
+      const client = new AzureDevOpsClient(); // Use the AzureDevOpsClient class
+      const token = await client._getAuthHeader(); // Get the OAuth token
+
       const profileUrl = `https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1-preview.1`;
-      const authHeader = { Authorization: `Basic ${Buffer.from(`:${pat}`).toString('base64')}` };
-  
-      const profileResponse = await fetch(profileUrl, { headers: authHeader });
-      if (!profileResponse.ok) throw new Error('Failed to fetch user profile.');
-  
-      const profileData = await profileResponse.json();
+      const response = await fetch(profileUrl, { headers: token });
+
+      if (!response.ok) throw new Error('Failed to fetch user profile.');
+
+      const profileData = await response.json();
       const memberId = profileData.id;
-  
+
       const orgsUrl = `https://app.vssps.visualstudio.com/_apis/accounts?memberId=${memberId}&api-version=7.1-preview.1`;
-      const orgsResponse = await fetch(orgsUrl, { headers: authHeader });
+      const orgsResponse = await fetch(orgsUrl, { headers: token });
+
       if (!orgsResponse.ok) throw new Error('Failed to fetch organizations.');
-  
+
       const orgsData = await orgsResponse.json();
       return orgsData.value.map(org => ({ id: org.accountId, name: org.accountName }));
     } catch (error) {

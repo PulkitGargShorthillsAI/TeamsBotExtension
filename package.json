@@ -55,7 +55,7 @@
   "dependencies": {
     "@google/generative-ai": "^0.24.0",
     "dotenv": "^16.5.0",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^3.3.2",
+    "open": "^10.1.1"
   }
 }
-
