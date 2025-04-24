@@ -33,27 +33,27 @@ class ChatViewProvider {
       localResourceRoots: [this.extensionUri]
     };
     webviewView.webview.html = this._getHtml();
-
-    // Updated welcome message
-    webviewView.webview.postMessage({
-      command: 'receiveMessage',
-      text: `
-        <b>Welcome to Teams Bot!</b><br>
-        Here are some commands you can use:<br>
-        • <code>@create_ticket &lt;title&gt;</code> - Create a new ticket.<br>
-        • <code>@view_tickets</code> - View your open tickets.<br>
-        • <code>@view_tickets &lt;id&gt;</code> - View details of a specific ticket by ID.<br>
-        • <code>#&lt;id&gt; @comment &lt;comment text&gt;</code> - Add a comment to a specific ticket by ID.<br>
-        • <code>@help</code> - Get information about available commands.<br>
-        Feel free to ask me anything else!
-      `
-    });
-
-    webviewView.webview.onDidReceiveMessage(msg => {
-      if (msg.command === 'sendMessage') {
-        this._onUserMessage(msg.text.trim());
+  
+    webviewView.webview.onDidReceiveMessage(async msg => {
+      if (msg.command === 'fetchOrganizations') {
+        const organizations = await this._getOrganizations();
+        this._postMessage({ command: 'populateOrganizations', organizations });
+      } else if (msg.command === 'fetchProjects') {
+        const projects = await this._getProjects(msg.organization);
+        this._postMessage({ command: 'populateProjects', projects });
+      } else if (msg.command === 'sendMessage') {
+        const { text, organization, project } = msg;
+        if (!organization || !project) {
+          this._post('❌ Please select both an organization and a project before proceeding.');
+          return;
+        }
+        this._onUserMessage(text.trim(), organization, project);
       }
     });
+  }
+
+  _postMessage(message) {
+    this.view?.webview.postMessage(message);
   }
 
   _removeJsonWrapper(text) {
@@ -66,16 +66,21 @@ class ChatViewProvider {
   }
   
 
-  async _onUserMessage(text) {
+  async _onUserMessage(text, organization, project) {
     try {
+      if (!organization || !project) {
+        this._post('❌ Please select both an organization and a project before proceeding.');
+        return;
+      }
+  
       // Use GEMINI to classify the user's input into multiple commands
       const commands = await this._getCommandsFromGemini(text);
-
+  
       if (!commands || commands.length === 0) {
         this._post("I couldn't understand your request. Please try again.");
         return;
       }
-
+  
       for (const command of commands) {
         if (command.startsWith('@create_ticket')) {
           const match = command.match(/^@create_ticket\s+(.+?)(?:\s+description\s+"(.+)")?$/i);
@@ -85,7 +90,7 @@ class ChatViewProvider {
             this.pendingTitle = title;
             if (description) {
               const structured = await this._structureDesc(description);
-              await this._makeTicket(title, structured);
+              await this._makeTicket(title, structured, organization, project);
             } else {
               this._post(`Got it! Title: <b>${title}</b><br>
                 Please describe what needs to be done in simple terms, or type "skip", "leave it blank", or "leave blank" to proceed without a description.`);
@@ -102,19 +107,19 @@ class ChatViewProvider {
             Feel free to ask me anything related to these commands!
           `);
         } else if (command === '@view_tickets') {
-          await this._showTickets();
+          await this._showTickets(organization, project);
         } else if (command.startsWith('@view_tickets')) {
           const match = command.match(/^@view_tickets\s+(\d+)$/i);
           if (match) {
             const workItemId = parseInt(match[1], 10);
-            await this._showTickets(workItemId);
+            await this._showTickets(organization, project, workItemId);
           }
         } else if (command.startsWith('#') && command.includes('@comment')) {
           const match = command.match(/^#(\d+)\s+@comment\s+(.+)/i);
           if (match) {
             const workItemId = parseInt(match[1], 10);
             const commentText = match[2].trim();
-            await this._addCommentToWorkItem(workItemId, commentText);
+            await this._addCommentToWorkItem(workItemId, commentText, organization, project);
           }
         } else {
           this._post(`I couldn't understand the command: ${command}`);
@@ -185,9 +190,9 @@ class ChatViewProvider {
     return res.text().trim();
   }
 
-  async _makeTicket(title, htmlDesc) {
+  async _makeTicket(title, htmlDesc, organization, project) {
     try {
-      const org = process.env.ORG, proj = process.env.AZURE_PROJECT, pat = process.env.AZURE_PAT;
+      const org = organization, proj = project, pat = process.env.AZURE_PAT;
       if (!org || !proj || !pat) throw new Error('Missing ORG/AZURE_PROJECT/AZURE_PAT');
       const email = await this._getEmail();
 
@@ -211,10 +216,10 @@ class ChatViewProvider {
     }
   }
 
-  async _showTickets(workItemId = null) {
+  async _showTickets(organization, project, workItemId = null) {
     try {
       
-      const org = process.env.ORG, proj = process.env.AZURE_PROJECT, pat = process.env.AZURE_PAT;
+      const org = organization, proj = project, pat = process.env.AZURE_PAT;
       const client = new AzureDevOpsClient(org, proj, pat);
       const email = await this._getEmail();
         if (email === null) {
@@ -231,7 +236,7 @@ class ChatViewProvider {
         }
 
         // Fetch history and format the work item
-        const history = await this._getWorkItemHistory(workItemId);
+        const history = await this._getWorkItemHistory(org,proj,workItemId);
         const details = this._formatWorkItem(workItem, history);
 
         this._post(details);
@@ -292,13 +297,30 @@ class ChatViewProvider {
           flex-direction: column;
           height: 100vh;
         }
-  
+
+        #dropdown-container {
+          display: flex;
+          padding: 10px;
+          gap: 10px;
+          border-bottom: 1px solid var(--vscode-input-border);
+          background-color: var(--vscode-editor-background);
+        }
+
+        select {
+          padding: 8px;
+          border: 1px solid var(--vscode-input-border);
+          background-color: var(--vscode-input-background);
+          color: var(--vscode-input-foreground);
+          border-radius: 4px;
+          font-size: 14px;
+        }
+
         #chat-container {
           display: flex;
           flex-direction: column;
           height: 100%;
         }
-  
+
         #messages {
           flex-grow: 1;
           overflow-y: auto;
@@ -307,7 +329,7 @@ class ChatViewProvider {
           flex-direction: column;
           gap: 12px;
         }
-  
+
         .message {
           padding: 10px 14px;
           border-radius: 16px;
@@ -317,27 +339,27 @@ class ChatViewProvider {
           line-height: 1.4;
           box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
         }
-  
+
         .user-message {
           background-color: var(--vscode-badge-background);
           color: var(--vscode-badge-foreground);
           align-self: flex-end;
           border-bottom-right-radius: 4px;
         }
-  
+
         .bot-message {
           background-color: var(--vscode-editor-inactiveSelectionBackground);
           align-self: flex-start;
           border-bottom-left-radius: 4px;
         }
-  
+
         #input-container {
           display: flex;
           padding: 10px 12px;
           border-top: 1px solid var(--vscode-input-border);
           background-color: var(--vscode-editor-background);
         }
-  
+
         #message-input {
           flex-grow: 1;
           padding: 8px 12px;
@@ -348,7 +370,7 @@ class ChatViewProvider {
           border-radius: 20px;
           font-size: 14px;
         }
-  
+
         button {
           padding: 8px 16px;
           background-color: var(--vscode-button-background);
@@ -359,11 +381,11 @@ class ChatViewProvider {
           font-size: 14px;
           margin-right: 8px;
         }
-  
+
         button:hover {
           background-color: var(--vscode-button-hoverBackground);
         }
-  
+
         #quick-actions {
           display: flex;
           padding: 10px 12px;
@@ -375,6 +397,14 @@ class ChatViewProvider {
       </style>
     </head>
     <body>
+      <div id="dropdown-container">
+        <select id="organization-dropdown">
+          <option value="" disabled selected>Select Organization</option>
+        </select>
+        <select id="project-dropdown" disabled>
+          <option value="" disabled selected>Select Project</option>
+        </select>
+      </div>
       <div id="chat-container">
         <div id="quick-actions">
           <button class="quick-action" data-text="@view_tickets">View Tickets</button>
@@ -390,38 +420,43 @@ class ChatViewProvider {
       </div>
       <script>
         const vscode = acquireVsCodeApi();
+        const orgDropdown = document.getElementById('organization-dropdown');
+        const projectDropdown = document.getElementById('project-dropdown');
         const messagesContainer = document.getElementById('messages');
         const messageInput = document.getElementById('message-input');
         const sendButton = document.getElementById('send-button');
         const quickActionButtons = document.querySelectorAll('.quick-action');
-  
+
+        let selectedOrganization = null;
+        let selectedProject = null;
+
+        orgDropdown.addEventListener('change', () => {
+          selectedOrganization = orgDropdown.options[orgDropdown.selectedIndex].textContent; // Get the organization name
+          vscode.postMessage({ command: 'fetchProjects', organization: selectedOrganization });
+        });
+
+        projectDropdown.addEventListener('change', () => {
+          selectedProject = projectDropdown.options[projectDropdown.selectedIndex].textContent; // Get the project name
+        });
+
         sendButton.addEventListener('click', sendMessage);
         messageInput.addEventListener('keypress', event => {
           if (event.key === 'Enter') sendMessage();
         });
-  
-        quickActionButtons.forEach(button => {
-          button.addEventListener('click', () => {
-            const text = button.getAttribute('data-text');
-            messageInput.value = text;
-            messageInput.focus();
-          });
-        });
-  
-        window.addEventListener('message', event => {
-          const message = event.data;
-          if (message.command === 'receiveMessage') appendMessage(message.text, 'bot');
-        });
-  
+
         function sendMessage() {
           const text = messageInput.value.trim();
+          if (!selectedOrganization || !selectedProject) {
+            appendMessage('❌ Please select both an organization and a project before proceeding.', 'bot');
+            return;
+          }
           if (text) {
             appendMessage(text, 'user');
-            vscode.postMessage({ command: 'sendMessage', text });
+            vscode.postMessage({ command: 'sendMessage', text, organization: selectedOrganization, project: selectedProject });
             messageInput.value = '';
           }
         }
-  
+
         function appendMessage(text, sender) {
           const messageElement = document.createElement('div');
           messageElement.classList.add('message', sender === 'user' ? 'user-message' : 'bot-message');
@@ -429,14 +464,40 @@ class ChatViewProvider {
           messagesContainer.appendChild(messageElement);
           messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
+
+        // Fetch organizations and populate the dropdown
+        vscode.postMessage({ command: 'fetchOrganizations' });
+
+        window.addEventListener('message', event => {
+          const message = event.data;
+
+          if (message.command === 'populateOrganizations') {
+            populateDropdown(orgDropdown, message.organizations);
+          } else if (message.command === 'populateProjects') {
+            populateDropdown(projectDropdown, message.projects);
+            projectDropdown.disabled = false;
+          } else if (message.command === 'receiveMessage') {
+            appendMessage(message.text, 'bot');
+          }
+        });
+
+        function populateDropdown(dropdown, items) {
+          dropdown.innerHTML = '<option value="" disabled selected>Select</option>';
+          items.forEach(item => {
+            const option = document.createElement('option');
+            option.value = item.id || item.name;
+            option.textContent = item.name;
+            dropdown.appendChild(option);
+          });
+        }
       </script>
     </body>
     </html>`;
   }  
 
-  async _getWorkItemHistory(workItemId) {
+  async _getWorkItemHistory(organization,project,workItemId) {
     try {
-      const org = process.env.ORG, proj = process.env.AZURE_PROJECT, pat = process.env.AZURE_PAT;
+      const org = organization, proj = project, pat = process.env.AZURE_PAT;
       const client = new AzureDevOpsClient(org, proj, pat);
       const updatesUrl = `${client.baseUrl}/wit/workitems/${workItemId}/updates?api-version=${client.apiVersion}`;
       const response = await fetch(updatesUrl, { headers: client._getAuthHeader() });
@@ -565,9 +626,9 @@ class ChatViewProvider {
       .trim();
   }
 
-  async _addCommentToWorkItem(workItemId, commentText) {
+  async _addCommentToWorkItem(workItemId, commentText, organization, project) {
     try {
-      const org = process.env.ORG, proj = process.env.AZURE_PROJECT, pat = process.env.AZURE_PAT;
+      const org = organization, proj = project, pat = process.env.AZURE_PAT;
       const client = new AzureDevOpsClient(org, proj, pat);
 
       const email = await this._getEmail();
@@ -591,44 +652,22 @@ class ChatViewProvider {
   }
 
 
-  async _getProjects() {
+  async _getProjects(organizationName) {
     try {
-      const org = process.env.ORG;
       const pat = process.env.AZURE_PAT;
+      if (!organizationName || !pat) throw new Error('Missing organization name or AZURE_PAT.');
   
-      if (!org || !pat) {
-        throw new Error('Missing ORG or AZURE_PAT in environment variables.');
-      }
-  
-      const url = `https://dev.azure.com/${org}/_apis/projects?api-version=7.1-preview.4`;
-      const authHeader = {
-        Authorization: `Basic ${Buffer.from(`:${pat}`).toString('base64')}`
-      };
+      const url = `https://dev.azure.com/${organizationName}/_apis/projects?api-version=7.1-preview.4`;
+      const authHeader = { Authorization: `Basic ${Buffer.from(`:${pat}`).toString('base64')}` };
   
       const response = await fetch(url, { headers: authHeader });
-  
-      if (!response.ok) {
-        throw new Error(`Failed to fetch projects: ${response.status} ${response.statusText}`);
-      }
+      if (!response.ok) throw new Error(`Failed to fetch projects: ${response.status} ${response.statusText}`);
   
       const data = await response.json();
-      const projects = data.value;
-  
-      if (projects.length === 0) {
-        console.log('No projects found.');
-        this._post('No projects found.');
-      } else {
-        console.log('Projects:');
-        projects.forEach(project => {
-          console.log(`- ${project.name}`);
-        });
-  
-        const projectList = projects.map(project => `<li>${project.name}</li>`).join('');
-        this._post(`<b>Your Projects:</b><ul>${projectList}</ul>`);
-      }
+      return data.value.map(project => ({ id: project.id, name: project.name }));
     } catch (error) {
       console.error('Error fetching projects:', error);
-      this._post(`❌ Error fetching projects: ${error.message}`);
+      return [];
     }
   }
 
@@ -640,58 +679,26 @@ class ChatViewProvider {
   async _getOrganizations() {
     try {
       const pat = process.env.AZURE_PAT;
+      if (!pat) throw new Error('Missing AZURE_PAT in environment variables.');
   
-      if (!pat) {
-        throw new Error('Missing AZURE_PAT in environment variables.');
-      }
-  
-      // Step 1: Fetch the user's profile to get the memberId
       const profileUrl = `https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1-preview.1`;
-      const authHeader = {
-        Authorization: `Basic ${Buffer.from(`:${pat}`).toString('base64')}`
-      };
+      const authHeader = { Authorization: `Basic ${Buffer.from(`:${pat}`).toString('base64')}` };
   
       const profileResponse = await fetch(profileUrl, { headers: authHeader });
-  
-      if (!profileResponse.ok) {
-        const errorText = await profileResponse.text();
-        throw new Error(`Failed to fetch user profile: ${profileResponse.status} ${profileResponse.statusText} - ${errorText}`);
-      }
+      if (!profileResponse.ok) throw new Error('Failed to fetch user profile.');
   
       const profileData = await profileResponse.json();
       const memberId = profileData.id;
   
-      if (!memberId) {
-        throw new Error('Failed to retrieve memberId from user profile.');
-      }
-  
-      // Step 2: Fetch the organizations using the memberId
       const orgsUrl = `https://app.vssps.visualstudio.com/_apis/accounts?memberId=${memberId}&api-version=7.1-preview.1`;
       const orgsResponse = await fetch(orgsUrl, { headers: authHeader });
-  
-      if (!orgsResponse.ok) {
-        const errorText = await orgsResponse.text();
-        throw new Error(`Failed to fetch organizations: ${orgsResponse.status} ${orgsResponse.statusText} - ${errorText}`);
-      }
+      if (!orgsResponse.ok) throw new Error('Failed to fetch organizations.');
   
       const orgsData = await orgsResponse.json();
-      const organizations = orgsData.value;
-  
-      if (!organizations || organizations.length === 0) {
-        console.log('No organizations found.');
-        this._post('No organizations found.');
-      } else {
-        console.log('Organizations:');
-        organizations.forEach(org => {
-          console.log(`- ${org.accountName}`);
-        });
-  
-        const orgList = organizations.map(org => `<li>${org.accountName}</li>`).join('');
-        this._post(`<b>Your Organizations:</b><ul>${orgList}</ul>`);
-      }
+      return orgsData.value.map(org => ({ id: org.accountId, name: org.accountName }));
     } catch (error) {
       console.error('Error fetching organizations:', error);
-      this._post(`❌ Error fetching organizations: ${error.message}`);
+      return [];
     }
   }
 
