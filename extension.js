@@ -490,6 +490,15 @@ class ChatViewProvider {
             dropdown.appendChild(option);
           });
         }
+
+
+        quickActionButtons.forEach(button => {
+          button.addEventListener('click', () => {
+            const text = button.getAttribute('data-text');
+            messageInput.value = text;
+            messageInput.focus();
+          });
+        });
       </script>
     </body>
     </html>`;
