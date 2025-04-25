@@ -1,6 +1,6 @@
 const mysql = require('mysql2');
 const crypto = require('crypto');
-require('dotenv').config();
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 
 const ENCRYPTION_KEY = crypto.createHash('sha256').update(String(process.env.ENCRYPTION_KEY || '12345678901234567890123456789012')).digest('base64').substr(0, 32); // Must be 32 bytes
 const IV_LENGTH = 16; // Initialization vector length
@@ -9,8 +9,8 @@ class MySQLClient {
   constructor() {
     this.connection = mysql.createConnection({
       host: 'localhost',
-      user: 'root', // Replace with your MySQL username
-      password: 'rootroot', // Replace with your MySQL password
+      user: process.env.MYSQL_USER, // Use MYSQL_USER from .env
+      password: process.env.MYSQL_PASSWORD
     });
 
     this.connection.connect(err => {
