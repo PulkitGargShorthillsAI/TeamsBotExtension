@@ -11,9 +11,23 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 function activate(context) {
   console.log('Teams Bot extension active');
   const provider = new ChatViewProvider(context.extensionUri);
+
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider("teamsBot.chatView", provider, {
       webviewOptions: { retainContextWhenHidden: true }
+    })
+  );
+
+  // Listen for sign-in/sign-out events
+  context.subscriptions.push(
+    vscode.authentication.onDidChangeSessions(async (e) => {
+      if (e.provider.id === 'microsoft') {
+        const session = await vscode.authentication.getSession('microsoft', ['email'], { createIfNone: false });
+        if (!session) {
+          // User signed out, reset the UI
+          provider.resetUI();
+        }
+      }
     })
   );
 }
@@ -43,6 +57,7 @@ class ChatViewProvider {
         const projects = await this._getProjects(msg.organization);
         this._postMessage({ command: 'populateProjects', projects });
       } else if (msg.command === 'sendMessage') {
+        await this._getEmail();
         const { text, organization, project } = msg;
         if (!organization || !project) {
           this._post('❌ Please select both an organization and a project before proceeding.');
@@ -51,6 +66,18 @@ class ChatViewProvider {
         this._onUserMessage(text.trim(), organization, project);
       }
     });
+  }
+
+
+  resetUI() {
+    // Clear the chat messages
+    this._postMessage({ command: 'clearChat' });
+  
+    // Clear the dropdowns
+    this._postMessage({ command: 'clearDropdowns' });
+  
+    // Show a message to the user
+    this._post('You have been signed out. Please sign in again to continue using the chatbot.');
   }
 
   _postMessage(message) {
@@ -69,6 +96,14 @@ class ChatViewProvider {
 
   async _onUserMessage(text, organization, project) {
     try {
+
+
+      const email = await this._getEmail();
+      if (!email) {
+        this._post('❌ Please log in with an authorized email to use the chatbot.');
+        return;
+      }
+
       if (!organization || !project) {
         this._post('❌ Please select both an organization and a project before proceeding.');
         return;
@@ -465,6 +500,12 @@ class ChatViewProvider {
           const text = messageInput.value.trim();
           if (!selectedOrganization || !selectedProject) {
             appendMessage('❌ Please select both an organization and a project before proceeding.', 'bot');
+            if(selectedOrganization === null) {
+              vscode.postMessage({command:'fetchOrganizations'});
+            }
+            else{
+              vscode.postMessage({command:'fetchProjects', organization: selectedOrganization });
+            }
             return;
           }
           if (text) {
@@ -495,8 +536,25 @@ class ChatViewProvider {
             projectDropdown.disabled = false;
           } else if (message.command === 'receiveMessage') {
             appendMessage(message.text, 'bot');
+          } else if (message.command === 'clearChat') {
+            clearChat();
+          } else if (message.command === 'clearDropdowns') {
+            clearDropdowns();
           }
         });
+
+        function clearChat() {
+          messagesContainer.innerHTML = ''; // Clear all chat messages
+          messageInput.value = '';
+        }
+
+        function clearDropdowns() {
+          orgDropdown.innerHTML = '<option value="" disabled selected>Select Organization</option>';
+          projectDropdown.innerHTML = '<option value="" disabled selected>Select Project</option>';
+          projectDropdown.disabled = true;
+          selectedOrganization = null;
+          selectedProject = null;
+        }
 
         function populateDropdown(dropdown, items) {
           dropdown.innerHTML = '<option value="" disabled selected>Select</option>';
