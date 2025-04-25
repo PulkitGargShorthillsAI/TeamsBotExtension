@@ -308,6 +308,7 @@ class ChatViewProvider {
           gap: 10px;
           border-bottom: 1px solid var(--vscode-input-border);
           background-color: var(--vscode-editor-background);
+          flex-wrap: wrap;
         }
 
         select {
@@ -362,6 +363,8 @@ class ChatViewProvider {
           padding: 10px 12px;
           border-top: 1px solid var(--vscode-input-border);
           background-color: var(--vscode-editor-background);
+          position: sticky;
+          bottom: 0;
         }
 
         #message-input {
@@ -397,25 +400,35 @@ class ChatViewProvider {
           background-color: var(--vscode-editor-background);
           gap: 8px;
           flex-wrap: wrap;
+          position: sticky;
+        }
+
+        header{
+          display: flex;
+          flex-direction: column;
+          position: sticky;
+          top: 0;
+          z-index: 1;
         }
       </style>
     </head>
     <body>
-      <div id="dropdown-container">
-        <select id="organization-dropdown">
-          <option value="" disabled selected>Select Organization</option>
-        </select>
-        <select id="project-dropdown" disabled>
-          <option value="" disabled selected>Select Project</option>
-        </select>
-      </div>
-      <div id="chat-container">
-        <div id="quick-actions">
-          <button class="quick-action" data-text="@view_tickets">View Tickets</button>
-          <button class="quick-action" data-text="@help">Help</button>
-          <button class="quick-action" data-text="@create_ticket">Create Ticket</button>
-          <button class="quick-action" data-text="#<id> @comment">Comment</button>
+      <header>
+        <div id="dropdown-container">
+          <select id="organization-dropdown">
+            <option value="" disabled selected>Select Organization</option>
+          </select>
+          <select id="project-dropdown" disabled>
+            <option value="" disabled selected>Select Project</option>
+          </select>
         </div>
+        <div id="quick-actions">
+            <button class="quick-action" data-text="@view_tickets">View Tickets</button>
+            <button class="quick-action" data-text="@help">Help</button>
+            <button class="quick-action" data-text="@create_ticket">Create Ticket</button>
+        </div>
+      </header>
+      <div id="chat-container">
         <div id="messages"></div>
         <div id="input-container">
           <input type="text" id="message-input" placeholder="Type a message..." />
