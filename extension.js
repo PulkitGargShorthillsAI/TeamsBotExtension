@@ -50,7 +50,10 @@ class ChatViewProvider {
     webviewView.webview.html = this._getHtml();
   
     webviewView.webview.onDidReceiveMessage(async msg => {
-      if (msg.command === 'fetchOrganizations') {
+      if (msg.command === 'resetPatToken') {
+        await this._resetPatToken();
+        this._postMessage({ command: 'clearDropdowns' });
+      } else if (msg.command === 'fetchOrganizations') {
         const organizations = await this._getOrganizations();
         this._postMessage({ command: 'populateOrganizations', organizations });
       } else if (msg.command === 'fetchProjects') {
@@ -337,12 +340,32 @@ class ChatViewProvider {
           height: 100vh;
         }
 
+        header {
+          position: sticky;
+          top: 0;
+          z-index: 10;
+          background-color: var(--vscode-editor-background);
+          border-bottom: 1px solid var(--vscode-input-border);
+          padding: 10px;
+        }
+
+        #header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 10px;
+        }
+
         #dropdown-container {
           display: flex;
-          padding: 10px;
           gap: 10px;
-          border-bottom: 1px solid var(--vscode-input-border);
-          background-color: var(--vscode-editor-background);
+          flex-wrap: wrap;
+          margin-bottom: 10px;
+        }
+
+        #quick-actions {
+          display: flex;
+          gap: 10px;
           flex-wrap: wrap;
         }
 
@@ -355,16 +378,27 @@ class ChatViewProvider {
           font-size: 14px;
         }
 
-        #chat-container {
-          display: flex;
-          flex-direction: column;
-          height: 100%;
+        button {
+          padding: 8px 16px;
+          background-color: var(--vscode-button-background);
+          color: var(--vscode-button-foreground);
+          border: none;
+          border-radius: 20px;
+          cursor: pointer;
+          font-size: 14px;
         }
 
-        #messages {
+        button:hover {
+          background-color: var(--vscode-button-hoverBackground);
+        }
+
+        #chat-container {
           flex-grow: 1;
           overflow-y: auto;
           padding: 16px;
+        }
+
+        #messages {
           display: flex;
           flex-direction: column;
           gap: 12px;
@@ -394,12 +428,13 @@ class ChatViewProvider {
         }
 
         #input-container {
-          display: flex;
-          padding: 10px 12px;
-          border-top: 1px solid var(--vscode-input-border);
-          background-color: var(--vscode-editor-background);
           position: sticky;
           bottom: 0;
+          z-index: 10;
+          display: flex;
+          padding: 10px;
+          border-top: 1px solid var(--vscode-input-border);
+          background-color: var(--vscode-editor-background);
         }
 
         #message-input {
@@ -412,43 +447,13 @@ class ChatViewProvider {
           border-radius: 20px;
           font-size: 14px;
         }
-
-        button {
-          padding: 8px 16px;
-          background-color: var(--vscode-button-background);
-          color: var(--vscode-button-foreground);
-          border: none;
-          border-radius: 20px;
-          cursor: pointer;
-          font-size: 14px;
-          margin-right: 8px;
-        }
-
-        button:hover {
-          background-color: var(--vscode-button-hoverBackground);
-        }
-
-        #quick-actions {
-          display: flex;
-          padding: 10px 12px;
-          border-bottom: 1px solid var(--vscode-input-border);
-          background-color: var(--vscode-editor-background);
-          gap: 8px;
-          flex-wrap: wrap;
-          position: sticky;
-        }
-
-        header{
-          display: flex;
-          flex-direction: column;
-          position: sticky;
-          top: 0;
-          z-index: 1;
-        }
       </style>
     </head>
     <body>
       <header>
+        <div id="header">
+          <button id="reset-pat-button">Reset PAT Token</button>
+        </div>
         <div id="dropdown-container">
           <select id="organization-dropdown">
             <option value="" disabled selected>Select Organization</option>
@@ -458,17 +463,17 @@ class ChatViewProvider {
           </select>
         </div>
         <div id="quick-actions">
-            <button class="quick-action" data-text="@view_tickets">View Tickets</button>
-            <button class="quick-action" data-text="@help">Help</button>
-            <button class="quick-action" data-text="@create_ticket">Create Ticket</button>
+          <button class="quick-action" data-text="@view_tickets">View Tickets</button>
+          <button class="quick-action" data-text="@help">Help</button>
+          <button class="quick-action" data-text="@create_ticket">Create Ticket</button>
         </div>
       </header>
       <div id="chat-container">
         <div id="messages"></div>
-        <div id="input-container">
-          <input type="text" id="message-input" placeholder="Type a message..." />
-          <button id="send-button">Send</button>
-        </div>
+      </div>
+      <div id="input-container">
+        <input type="text" id="message-input" placeholder="Type a message..." />
+        <button id="send-button">Send</button>
       </div>
       <script>
         const vscode = acquireVsCodeApi();
@@ -478,17 +483,22 @@ class ChatViewProvider {
         const messageInput = document.getElementById('message-input');
         const sendButton = document.getElementById('send-button');
         const quickActionButtons = document.querySelectorAll('.quick-action');
-
+        const resetPatButton = document.getElementById('reset-pat-button');
         let selectedOrganization = null;
         let selectedProject = null;
 
+        resetPatButton.addEventListener('click', () => {
+          vscode.postMessage({ command: 'resetPatToken' });
+          vscode.postMessage({ command: 'fetchOrganizations' });
+        });
+
         orgDropdown.addEventListener('change', () => {
-          selectedOrganization = orgDropdown.options[orgDropdown.selectedIndex].textContent; // Get the organization name
+          selectedOrganization = orgDropdown.options[orgDropdown.selectedIndex].textContent;
           vscode.postMessage({ command: 'fetchProjects', organization: selectedOrganization });
         });
 
         projectDropdown.addEventListener('change', () => {
-          selectedProject = projectDropdown.options[projectDropdown.selectedIndex].textContent; // Get the project name
+          selectedProject = projectDropdown.options[projectDropdown.selectedIndex].textContent;
         });
 
         sendButton.addEventListener('click', sendMessage);
@@ -500,12 +510,6 @@ class ChatViewProvider {
           const text = messageInput.value.trim();
           if (!selectedOrganization || !selectedProject) {
             appendMessage('❌ Please select both an organization and a project before proceeding.', 'bot');
-            if(selectedOrganization === null) {
-              vscode.postMessage({command:'fetchOrganizations'});
-            }
-            else{
-              vscode.postMessage({command:'fetchProjects', organization: selectedOrganization });
-            }
             return;
           }
           if (text) {
@@ -523,7 +527,6 @@ class ChatViewProvider {
           messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
 
-        // Fetch organizations and populate the dropdown
         vscode.postMessage({ command: 'fetchOrganizations' });
 
         window.addEventListener('message', event => {
@@ -536,25 +539,8 @@ class ChatViewProvider {
             projectDropdown.disabled = false;
           } else if (message.command === 'receiveMessage') {
             appendMessage(message.text, 'bot');
-          } else if (message.command === 'clearChat') {
-            clearChat();
-          } else if (message.command === 'clearDropdowns') {
-            clearDropdowns();
           }
         });
-
-        function clearChat() {
-          messagesContainer.innerHTML = ''; // Clear all chat messages
-          messageInput.value = '';
-        }
-
-        function clearDropdowns() {
-          orgDropdown.innerHTML = '<option value="" disabled selected>Select Organization</option>';
-          projectDropdown.innerHTML = '<option value="" disabled selected>Select Project</option>';
-          projectDropdown.disabled = true;
-          selectedOrganization = null;
-          selectedProject = null;
-        }
 
         function populateDropdown(dropdown, items) {
           dropdown.innerHTML = '<option value="" disabled selected>Select</option>';
@@ -565,15 +551,6 @@ class ChatViewProvider {
             dropdown.appendChild(option);
           });
         }
-
-
-        quickActionButtons.forEach(button => {
-          button.addEventListener('click', () => {
-            const text = button.getAttribute('data-text');
-            messageInput.value = text;
-            messageInput.focus();
-          });
-        });
       </script>
     </body>
     </html>`;
@@ -897,6 +874,37 @@ class ChatViewProvider {
       console.error('Error fetching PAT token:', error);
       vscode.window.showErrorMessage('Failed to retrieve or store PAT token.');
       return null;
+    }
+  }
+
+
+
+
+
+  async _resetPatToken() {
+    try {
+      const email = await this._getEmail();
+      if (!email) {
+        this._post('❌ Please log in to reset your PAT token.');
+        return;
+      }
+  
+      const newPatToken = await vscode.window.showInputBox({
+        prompt: 'Enter your new Azure DevOps PAT token',
+        password: true
+      });
+  
+      if (!newPatToken) {
+        vscode.window.showErrorMessage('PAT token reset canceled.');
+        return;
+      }
+  
+      // Call the resetPatToken method in the server
+      await MySQLClient.resetPatToken(email, newPatToken);
+      vscode.window.showInformationMessage('PAT token reset successfully.');
+    } catch (error) {
+      console.error('Error resetting PAT token:', error);
+      vscode.window.showErrorMessage(`Failed to reset PAT token: ${error.message}`);
     }
   }
 }

@@ -13,7 +13,7 @@ class MySQLClient {
       user: process.env.MYSQL_USER, // Use MYSQL_USER from .env
       password: process.env.MYSQL_PASSWORD
     });
-    
+
     this.connection.connect(err => {
       if (err) {
         console.error('Error connecting to MySQL:', err);
@@ -114,6 +114,30 @@ class MySQLClient {
         }
         const decryptedToken = this.decrypt(results[0].pat_token);
         resolve(decryptedToken);
+      });
+    });
+  }
+
+
+
+  // Reset PAT token
+  async resetPatToken(email, newPatToken) {
+    return new Promise((resolve, reject) => {
+      const encryptedToken = this.encrypt(newPatToken);
+      const query = `
+        UPDATE pat_tokens
+        SET pat_token = '${encryptedToken}', created_at = CURRENT_TIMESTAMP
+        WHERE email = '${email}';
+      `;
+      this.connection.query(query, [encryptedToken, email], (err, result) => {
+        if (err) {
+          console.error('Error resetting PAT token:', err);
+          return reject(err);
+        }
+        if (result.affectedRows === 0) {
+          return reject(new Error('No record found for the given email.'));
+        }
+        resolve(result);
       });
     });
   }
