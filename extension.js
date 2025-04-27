@@ -329,128 +329,131 @@ class ChatViewProvider {
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>Teams Bot</title>
       <style>
-        body {
-          font-family: var(--vscode-font-family, 'Segoe UI', sans-serif);
-          color: var(--vscode-editor-foreground);
-          background-color: var(--vscode-editor-background);
-          padding: 0;
-          margin: 0;
-          display: flex;
-          flex-direction: column;
-          height: 100vh;
-        }
+      body {
+        font-family: var(--vscode-font-family, 'Segoe UI', sans-serif);
+        color: var(--vscode-editor-foreground);
+        background-color: var(--vscode-editor-background);
+        padding: 0;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        overflow: hidden; /* Prevent double scrollbars */
+      }
 
-        header {
-          position: sticky;
-          top: 0;
-          z-index: 10;
-          background-color: var(--vscode-editor-background);
-          border-bottom: 1px solid var(--vscode-input-border);
-          padding: 10px;
-        }
+      .header {
+        display: flex;
+        flex-direction: column;
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        background-color: var(--vscode-editor-background);
+      }
 
-        #header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 10px;
-        }
+      #dropdown-container {
+        display: flex;
+        padding: 10px;
+        gap: 10px;
+        border-bottom: 1px solid var(--vscode-input-border);
+        background-color: var(--vscode-editor-background);
+        flex-wrap: wrap;
+      }
 
-        #dropdown-container {
-          display: flex;
-          gap: 10px;
-          flex-wrap: wrap;
-          margin-bottom: 10px;
-        }
+      select {
+        padding: 8px;
+        border: 1px solid var(--vscode-input-border);
+        background-color: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border-radius: 4px;
+        font-size: 14px;
+      }
 
-        #quick-actions {
-          display: flex;
-          gap: 10px;
-          flex-wrap: wrap;
-        }
+      #chat-container {
+        flex-grow: 1;
+        overflow-y: auto; /* Make chat scrollable */
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
 
-        select {
-          padding: 8px;
-          border: 1px solid var(--vscode-input-border);
-          background-color: var(--vscode-input-background);
-          color: var(--vscode-input-foreground);
-          border-radius: 4px;
-          font-size: 14px;
-        }
+      #messages {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
 
-        button {
-          padding: 8px 16px;
-          background-color: var(--vscode-button-background);
-          color: var(--vscode-button-foreground);
-          border: none;
-          border-radius: 20px;
-          cursor: pointer;
-          font-size: 14px;
-        }
+      .message {
+        padding: 10px 14px;
+        border-radius: 16px;
+        max-width: 75%;
+        word-wrap: break-word;
+        font-size: 14px;
+        line-height: 1.4;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+      }
 
-        button:hover {
-          background-color: var(--vscode-button-hoverBackground);
-        }
+      .user-message {
+        background-color: var(--vscode-badge-background);
+        color: var(--vscode-badge-foreground);
+        align-self: flex-end;
+        border-bottom-right-radius: 4px;
+      }
 
-        #chat-container {
-          flex-grow: 1;
-          overflow-y: auto;
-          padding: 16px;
-        }
+      .bot-message {
+        background-color: var(--vscode-editor-inactiveSelectionBackground);
+        align-self: flex-start;
+        border-bottom-left-radius: 4px;
+      }
 
-        #messages {
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-        }
+      #input-container {
+        display: flex;
+        padding: 10px 12px;
+        border-top: 1px solid var(--vscode-input-border);
+        background-color: var(--vscode-editor-background);
+        position: sticky;
+        bottom: 0;
+        z-index: 1;
+      }
 
-        .message {
-          padding: 10px 14px;
-          border-radius: 16px;
-          max-width: 75%;
-          word-wrap: break-word;
-          font-size: 14px;
-          line-height: 1.4;
-          box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
-        }
+      #message-input {
+        flex-grow: 1;
+        padding: 8px 12px;
+        margin-right: 10px;
+        border: 1px solid var(--vscode-input-border);
+        background-color: var(--vscode-input-background);
+        color: var(--vscode-input-foreground);
+        border-radius: 20px;
+        font-size: 14px;
+      }
 
-        .user-message {
-          background-color: var(--vscode-badge-background);
-          color: var(--vscode-badge-foreground);
-          align-self: flex-end;
-          border-bottom-right-radius: 4px;
-        }
+      button {
+        padding: 8px 16px;
+        background-color: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
+        border: none;
+        border-radius: 20px;
+        cursor: pointer;
+        font-size: 14px;
+      }
 
-        .bot-message {
-          background-color: var(--vscode-editor-inactiveSelectionBackground);
-          align-self: flex-start;
-          border-bottom-left-radius: 4px;
-        }
+      #quick-actions {
+              display: flex;
+              padding: 10px 12px;
+              border-bottom: 1px solid var(--vscode-input-border);
+              background-color: var(--vscode-editor-background);
+              gap: 8px;
+              flex-wrap: wrap;
+              position: sticky;
+            }
 
-        #input-container {
-          position: sticky;
-          bottom: 0;
-          z-index: 10;
-          display: flex;
-          padding: 10px;
-          border-top: 1px solid var(--vscode-input-border);
-          background-color: var(--vscode-editor-background);
-        }
-
-        #message-input {
-          flex-grow: 1;
-          padding: 8px 12px;
-          margin-right: 10px;
-          border: 1px solid var(--vscode-input-border);
-          background-color: var(--vscode-input-background);
-          color: var(--vscode-input-foreground);
-          border-radius: 20px;
-          font-size: 14px;
-        }
-      </style>
+      button:hover {
+        background-color: var(--vscode-button-hoverBackground);
+      }
+    </style>
     </head>
     <body>
-      <header>
+      <div class="header">
         <div id="header">
           <button id="reset-pat-button">Reset PAT Token</button>
         </div>
@@ -463,18 +466,20 @@ class ChatViewProvider {
           </select>
         </div>
         <div id="quick-actions">
-          <button class="quick-action" data-text="@view_tickets">View Tickets</button>
-          <button class="quick-action" data-text="@help">Help</button>
-          <button class="quick-action" data-text="@create_ticket">Create Ticket</button>
+            <button class="quick-action" data-text="@view_tickets">View Tickets</button>
+            <button class="quick-action" data-text="@help">Help</button>
+            <button class="quick-action" data-text="@create_ticket">Create Ticket</button>
         </div>
-      </header>
+      </div>
       <div id="chat-container">
         <div id="messages"></div>
       </div>
+
       <div id="input-container">
         <input type="text" id="message-input" placeholder="Type a message..." />
         <button id="send-button">Send</button>
       </div>
+      
       <script>
         const vscode = acquireVsCodeApi();
         const orgDropdown = document.getElementById('organization-dropdown');
@@ -492,13 +497,14 @@ class ChatViewProvider {
           vscode.postMessage({ command: 'fetchOrganizations' });
         });
 
+
         orgDropdown.addEventListener('change', () => {
-          selectedOrganization = orgDropdown.options[orgDropdown.selectedIndex].textContent;
+          selectedOrganization = orgDropdown.options[orgDropdown.selectedIndex].textContent; // Get the organization name
           vscode.postMessage({ command: 'fetchProjects', organization: selectedOrganization });
         });
 
         projectDropdown.addEventListener('change', () => {
-          selectedProject = projectDropdown.options[projectDropdown.selectedIndex].textContent;
+          selectedProject = projectDropdown.options[projectDropdown.selectedIndex].textContent; // Get the project name
         });
 
         sendButton.addEventListener('click', sendMessage);
@@ -510,6 +516,12 @@ class ChatViewProvider {
           const text = messageInput.value.trim();
           if (!selectedOrganization || !selectedProject) {
             appendMessage('❌ Please select both an organization and a project before proceeding.', 'bot');
+            if(selectedOrganization === null) {
+              vscode.postMessage({command:'fetchOrganizations'});
+            }
+            else{
+              vscode.postMessage({command:'fetchProjects', organization: selectedOrganization });
+            }
             return;
           }
           if (text) {
@@ -527,6 +539,7 @@ class ChatViewProvider {
           messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
 
+        // Fetch organizations and populate the dropdown
         vscode.postMessage({ command: 'fetchOrganizations' });
 
         window.addEventListener('message', event => {
@@ -539,8 +552,25 @@ class ChatViewProvider {
             projectDropdown.disabled = false;
           } else if (message.command === 'receiveMessage') {
             appendMessage(message.text, 'bot');
+          } else if (message.command === 'clearChat') {
+            clearChat();
+          } else if (message.command === 'clearDropdowns') {
+            clearDropdowns();
           }
         });
+
+        function clearChat() {
+          messagesContainer.innerHTML = ''; // Clear all chat messages
+          messageInput.value = '';
+        }
+
+        function clearDropdowns() {
+          orgDropdown.innerHTML = '<option value="" disabled selected>Select Organization</option>';
+          projectDropdown.innerHTML = '<option value="" disabled selected>Select Project</option>';
+          projectDropdown.disabled = true;
+          selectedOrganization = null;
+          selectedProject = null;
+        }
 
         function populateDropdown(dropdown, items) {
           dropdown.innerHTML = '<option value="" disabled selected>Select</option>';
@@ -551,6 +581,15 @@ class ChatViewProvider {
             dropdown.appendChild(option);
           });
         }
+
+
+        quickActionButtons.forEach(button => {
+          button.addEventListener('click', () => {
+            const text = button.getAttribute('data-text');
+            messageInput.value = text;
+            messageInput.focus();
+          });
+        });
       </script>
     </body>
     </html>`;
