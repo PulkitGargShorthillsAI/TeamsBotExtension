@@ -152,6 +152,7 @@ class ChatViewProvider {
             • <code>#&lt;id&gt; @update title "&lt;title&gt;" description "&lt;description&gt;"</code> - Update a ticket's title and description.<br>
             • <code>@board_summary</code> - Show summary of all tickets on the board.<br>
             • <code>@sprint_summary</code> - Show summary of tickets by sprint.<br>
+            • <code>@query_tickets &lt;query&gt;</code> - Query tickets by name or sprint (e.g., "show me all tickets of John" or "show me tickets in sprint 2").<br>
             • <code>@help</code> - Get information about available commands.<br>
             Feel free to ask me anything related to these commands!
           `);
@@ -184,6 +185,9 @@ class ChatViewProvider {
           await this._showBoardSummary(organization, project);
         } else if (command === '@sprint_summary') {
           await this._showSprintSummary(organization, project);
+        } else if (command.startsWith('@query_tickets')) {
+          const query = command.substring('@query_tickets '.length).trim();
+          await this._processTicketQuery(query, organization, project);
         } else {
           this._post(`I couldn't understand the command: ${command}`);
         }
@@ -200,67 +204,156 @@ class ChatViewProvider {
       const prompt = `
       You are an intelligent command parser for a task management system. Your role is to map user messages into strict predefined commands.
 
-Available Commands:
-- @help → Provide help information.
-- @view_tickets → View all assigned tickets.
-- @view_tickets <id> → View a specific ticket by ID.
-- @create_ticket <title> description "<description>" → Create a new ticket.
-- #<id> @comment <comment text> → Add a comment to a ticket.
-- #<id> @update title "<title>" description "<description>" → Update a ticket.
-- @board_summary → Show summary of all tickets on the board.
-- @sprint_summary → Show summary of tickets by sprint.
+      Available Commands:
+      - @help → Provide help information.
+      - @view_tickets → View all assigned tickets.
+      - @view_tickets <id> → View a specific ticket by ID.
+      - @create_ticket <title> description "<description>" → Create a new ticket.
+      - #<id> @comment <comment text> → Add a comment to a ticket.
+      - #<id> @update title "<title>" description "<description>" → Update a ticket.
+      - @board_summary → Show summary of all tickets on the board.
+      - @sprint_summary → Show summary of tickets by sprint.
+      - @query_tickets <query> → Query tickets based on user name or sprint.
 
-Strict Rules:
-- If multiple commands are mentioned in a single message, split them into separate outputs in order.
-- Always output a JSON array of only command strings. No explanation or extra text.
-- If the user gives a casual or layman description for creating or updating a ticket:
-  - Create a short, professional, formal title summarizing the task.
-  - Write a clear, well-phrased formal description based on the user's input.
-  - Avoid copying informal or casual language directly.
-- If details are missing, make reasonable formal assumptions based on the context.
+      Strict Rules:
+      - If multiple commands are mentioned in a single message, split them into separate outputs in order.
+      - Always output a JSON array of only command strings. No explanation or extra text.
+      - If the user gives a casual or layman description for creating or updating a ticket:
+        - Create a short, professional, formal title summarizing the task.
+        - Write a clear, well-phrased formal description based on the user's input.
+        - Avoid copying informal or casual language directly.
+      - If details are missing, make reasonable formal assumptions based on the context.
+      - For ticket queries, convert natural language into @query_tickets command with the exact query text.
 
-Examples:
+      Examples:
 
-User: "Show my tickets"
-Output: ["@view_tickets"]
+      User: "Show me all tickets of John"
+      Output: ["@query_tickets show me all tickets of John"]
 
-User: "Show 1345"
-Output: ["@view_tickets 1345"]
+      User: "Show me tickets of Sarah in sprint 2"
+      Output: ["@query_tickets show me tickets of Sarah in sprint 2"]
 
-User: "Create a ticket, I built a chatbot using Gemini and Pinecone, tested it fully."
-Output: ["@create_ticket Chatbot Development Using Gemini and Pinecone description \"Developed a chatbot leveraging Gemini LLM and Pinecone as a vector store. Completed unit testing to ensure functionality.\""]
+      User: "Show me all tickets in sprint 3"
+      Output: ["@query_tickets show me all tickets in sprint 3"]
 
-User: "Update ticket 1348, stored PAT token locally instead of MySQL"
-Output: ["#1348 @update title \"Store PAT Token Locally\" description \"Implemented functionality to securely store the PAT token locally within the VS Code extension, removing dependency on a remote MySQL server.\""]
+      User: "Show my tickets"
+      Output: ["@view_tickets"]
 
-User: "Comment on ticket 1234 that this needs urgent attention and then show it to me"
-Output: ["#1234 @comment this needs urgent attention", "@view_tickets 1234"]
+      User: "Show 1345"
+      Output: ["@view_tickets 1345"]
 
-User: "Create a ticket for migrating database to MongoDB and show me my tickets"
-Output: ["@create_ticket Database Migration to MongoDB description \"Migrated existing database infrastructure to MongoDB to enhance scalability and flexibility.\"", "@view_tickets"]
+      User: "Create a ticket, I built a chatbot using Gemini and Pinecone, tested it fully."
+      Output: ["@create_ticket Chatbot Development Using Gemini and Pinecone description \"Developed a chatbot leveraging Gemini LLM and Pinecone as a vector store. Completed unit testing to ensure functionality.\""]
 
-User: "Add a comment to ticket 5678 saying this issue is critical"
-Output: ["#5678 @comment this issue is critical"]
+      User: "Update ticket 1348, stored PAT token locally instead of MySQL"
+      Output: ["#1348 @update title \"Store PAT Token Locally\" description \"Implemented functionality to securely store the PAT token locally within the VS Code extension, removing dependency on a remote MySQL server.\""]
 
-User message:
-"${userMessage}"
+      User: "Comment on ticket 1234 that this needs urgent attention and then show it to me"
+      Output: ["#1234 @comment this needs urgent attention", "@view_tickets 1234"]
 
-Instructions:
-- Parse the message following the above rules.
-- If the message implies multiple commands, output all commands separately in sequence.
-- Always generate a formal title and description if user message is casual.
-- Output only a clean JSON array of valid commands.
-`;
+      User: "Create a ticket for migrating database to MongoDB and show me my tickets"
+      Output: ["@create_ticket Database Migration to MongoDB description \"Migrated existing database infrastructure to MongoDB to enhance scalability and flexibility.\"", "@view_tickets"]
+
+      User: "Add a comment to ticket 5678 saying this issue is critical"
+      Output: ["#5678 @comment this issue is critical"]
+
+      User message:
+      "${userMessage}"
+
+      Instructions:
+      - Parse the message following the above rules.
+      - If the message implies multiple commands, output all commands separately in sequence.
+      - Always generate a formal title and description if user message is casual.
+      - Output only a clean JSON array of valid commands.
+      `;
 
       const response = await model.generateContent(prompt);
       console.log(response.response.text());
 
-      
       const commands = JSON.parse(this._removeJsonWrapper(response.response.text().trim()));
       return commands;
     } catch (error) {
       console.error('Error fetching commands from GEMINI:', error);
-      return null; // Return null if GEMINI fails
+      return null;
+    }
+  }
+
+  async _processTicketQuery(query, organization, project) {
+    try {
+      // First get the sprint summary
+      const pat = await this._getPatToken();
+      const client = new AzureDevOpsClient(organization, project, pat);
+      const workItems = await client.getBoardSummary();
+      
+      if (!workItems || workItems.length === 0) {
+        this._post('No work items found on the board.');
+        return;
+      }
+
+      // Generate the sprint summary
+      const sprintSummary = this._generateSprintSummary(workItems);
+
+      // Use Gemini to interpret the query and find relevant tickets
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+      const prompt = `
+      You are a Ticket Query Processor.
+
+      Task:
+      - Analyze the provided Sprint Summary and extract tickets relevant to the user's query.
+
+      Sprint Summary:
+      ${sprintSummary}
+
+      User Query:
+      "${query}"
+
+      Instructions:
+      1. Determine if the query is asking for:
+        - A specific person's tickets
+        - A specific sprint's tickets
+        - Both person and sprint
+      2. Search the sprint summary for matching tickets based on the query.
+      3. Construct the output in **strict clean HTML**:
+        - Start with a \`<h3>\` heading summarizing the results (example: "Tickets assigned to John Doe in Sprint 24")
+        - Then with \`<h4\` heading tell the state active or new or closed
+        - Then display a \`<ul>\` list on the basis of ticket state:
+          - Each ticket as a \`<li>\` element showing:
+            - Ticket ID (bold)
+            - Ticket Title (normal)
+      4. If **no tickets match**, output a \`<h4>\` heading stating no matches found, like "No matching tickets found for John Doe in Sprint 24".
+
+      Output Format (important):
+      - Return only the **pure HTML string**.
+      - Do NOT wrap the HTML inside any Markdown code blocks (no \`\`\`html or \`\`\`).
+      - No extra explanations, no extra text, no notes — **only** valid HTML.
+
+      Example Outputs:
+
+      If matches are found:
+      <h2>Tickets assigned to John Doe in Sprint 24</h2>
+      <ul>
+        <li><b>#1234</b> Implement user authentication <i>(In Progress)</i></li>
+        <li><b>#1256</b> Fix login bug <i>(Done)</i></li>
+      </ul>
+
+      If no matches:
+      <h2>No matching tickets found for John Doe in Sprint 24</h2>
+
+      Proceed carefully and format the HTML properly.
+
+      `;
+
+      const response = await model.generateContent(prompt);
+      const result = response.response.text();
+
+      console.log(result);
+      const output = result.replace(/```html|```/g, '').trim();
+
+      
+      this._post(output);
+    } catch (error) {
+      console.error('Error processing ticket query:', error);
+      this._post(`❌ Error processing query: ${error.message}`);
     }
   }
 
