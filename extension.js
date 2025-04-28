@@ -108,8 +108,6 @@ class ChatViewProvider {
 
   async _onUserMessage(text, organization, project) {
     try {
-
-
       const email = await this._getEmail();
       if (!email) {
         this._post('❌ Please log in with an authorized email to use the chatbot.');
@@ -151,6 +149,7 @@ class ChatViewProvider {
             • <code>@view_tickets</code> - View your open tickets.<br>
             • <code>@view_tickets &lt;id&gt;</code> - View details of a specific ticket by ID.<br>
             • <code>#&lt;id&gt; @comment &lt;comment text&gt;</code> - Add a comment to a specific ticket by ID.<br>
+            • <code>#&lt;id&gt; @update title "&lt;title&gt;" description "&lt;description&gt;"</code> - Update a ticket's title and description.<br>
             • <code>@help</code> - Get information about available commands.<br>
             Feel free to ask me anything related to these commands!
           `);
@@ -169,6 +168,16 @@ class ChatViewProvider {
             const commentText = match[2].trim();
             await this._addCommentToWorkItem(workItemId, commentText, organization, project);
           }
+        } else if (command.startsWith('#') && command.includes('@update')) {
+          const match = command.match(/^#(\d+)\s+@update\s+title\s+"(.+?)"\s+description\s+"(.+?)"/i);
+          if (match) {
+            const workItemId = parseInt(match[1], 10);
+            const title = match[2].trim();
+            const description = match[3].trim();
+            await this._updateTicket(workItemId, title, description, organization, project);
+          } else {
+            this._post("❌ Invalid update command format. Please use: #<id> @update title \"<title>\" description \"<description>\"");
+          }
         } else {
           this._post(`I couldn't understand the command: ${command}`);
         }
@@ -183,21 +192,57 @@ class ChatViewProvider {
     try {
       const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
       const prompt = `
-      You are an intelligent assistant that interprets user messages and maps them to predefined commands.
-      If the user provides multiple commands in one message, split them into separate commands.
+      You are an intelligent command parser for a task management system. Your role is to map user messages into strict predefined commands.
 
-      Available commands:
-      - @help: Provide help information about available commands.
-      - @view_tickets: View all tickets assigned to the user.
-      - @view_tickets <id>: View details of a specific ticket by ID.
-      - @create_ticket <title> description "<description>": Create a new ticket with the given title and description.
-      - #<id> @comment <comment text>: Add a comment to a specific ticket by ID.
+Available Commands:
+- @help → Provide help information.
+- @view_tickets → View all assigned tickets.
+- @view_tickets <id> → View a specific ticket by ID.
+- @create_ticket <title> description "<description>" → Create a new ticket.
+- #<id> @comment <comment text> → Add a comment to a ticket.
+- #<id> @update title "<title>" description "<description>" → Update a ticket.
 
-      User message: "${userMessage}"
+Strict Rules:
+- If multiple commands are mentioned in a single message, split them into separate outputs in order.
+- Always output a JSON array of only command strings. No explanation or extra text.
+- If the user gives a casual or layman description for creating or updating a ticket:
+  - Create a short, professional, formal title summarizing the task.
+  - Write a clear, well-phrased formal description based on the user's input.
+  - Avoid copying informal or casual language directly.
+- If details are missing, make reasonable formal assumptions based on the context.
 
-      Return only the commands as a JSON array. Do not include any additional text or explanation. Example:
-      ["@view_tickets", "#1269 @comment good job"]
-    `;
+Examples:
+
+User: "Show my tickets"
+Output: ["@view_tickets"]
+
+User: "Show 1345"
+Output: ["@view_tickets 1345"]
+
+User: "Create a ticket, I built a chatbot using Gemini and Pinecone, tested it fully."
+Output: ["@create_ticket Chatbot Development Using Gemini and Pinecone description \"Developed a chatbot leveraging Gemini LLM and Pinecone as a vector store. Completed unit testing to ensure functionality.\""]
+
+User: "Update ticket 1348, stored PAT token locally instead of MySQL"
+Output: ["#1348 @update title \"Store PAT Token Locally\" description \"Implemented functionality to securely store the PAT token locally within the VS Code extension, removing dependency on a remote MySQL server.\""]
+
+User: "Comment on ticket 1234 that this needs urgent attention and then show it to me"
+Output: ["#1234 @comment this needs urgent attention", "@view_tickets 1234"]
+
+User: "Create a ticket for migrating database to MongoDB and show me my tickets"
+Output: ["@create_ticket Database Migration to MongoDB description \"Migrated existing database infrastructure to MongoDB to enhance scalability and flexibility.\"", "@view_tickets"]
+
+User: "Add a comment to ticket 5678 saying this issue is critical"
+Output: ["#5678 @comment this issue is critical"]
+
+User message:
+"${userMessage}"
+
+Instructions:
+- Parse the message following the above rules.
+- If the message implies multiple commands, output all commands separately in sequence.
+- Always generate a formal title and description if user message is casual.
+- Output only a clean JSON array of valid commands.
+`;
 
       const response = await model.generateContent(prompt);
       console.log(response.response.text());
@@ -760,6 +805,26 @@ class ChatViewProvider {
     }
   }
 
+  async _updateTicket(workItemId, title, description, organization, project) {
+    try {
+      const org = organization, proj = project, pat = await this._getPatToken();
+      if (!org || !proj || !pat) throw new Error('Missing ORG/AZURE_PROJECT/AZURE_PAT');
+      const email = await this._getEmail();
+
+      if(email === null) {
+        this._post(`❌ Error: You are not authorized to update tickets in this project. Please check your Azure DevOps permissions.`);
+        return;
+      }
+
+      const client = new AzureDevOpsClient(org, proj, pat);
+      const structuredDesc = await this._structureDesc(description);
+      await client.updateWorkItem(workItemId, title, structuredDesc);
+      this._post(`✅ Updated ticket <b>#${workItemId}</b> with new title and description.`);
+    } catch (error) {
+      console.error('Error updating ticket:', error);
+      this._post(`❌ Error updating ticket: ${error.message}`);
+    }
+  }
 
   async _getProjects(organizationName) {
     try {
@@ -789,11 +854,6 @@ class ChatViewProvider {
       return [];
     }
   }
-
-
-
-
-
 
   async _getOrganizations() {
     try {
@@ -837,12 +897,6 @@ class ChatViewProvider {
       return [];
     }
   }
-
-
-
-
-
-
 
   async _getTeamMembers() {
     try {
@@ -915,7 +969,6 @@ class ChatViewProvider {
       this._post(`❌ Error fetching team members: ${error.message}`);
     }
   }
-
 
   async _storePatToken(patToken) {
     try {

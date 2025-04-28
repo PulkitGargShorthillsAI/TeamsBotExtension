@@ -144,6 +144,29 @@ class AzureDevOpsClient {
     }
     return res.json();
   }
+
+  async updateWorkItem(workItemId, title, description) {
+    await this._loadFetch();
+    const url = `${this.baseUrl}/wit/workitems/${workItemId}?api-version=${this.apiVersion}`;
+    const patchDocument = [
+      { op: 'replace', path: '/fields/System.Title', value: title },
+      { op: 'replace', path: '/fields/System.Description', value: description }
+    ];
+    const headers = {
+      "Content-Type": "application/json-patch+json",
+      ...this._getAuthHeader()
+    };
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify(patchDocument)
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errText}`);
+    }
+    return res.json();
+  }
 }
 
 module.exports = AzureDevOpsClient;
