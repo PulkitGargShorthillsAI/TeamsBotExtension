@@ -150,6 +150,8 @@ class ChatViewProvider {
             • <code>@view_tickets &lt;id&gt;</code> - View details of a specific ticket by ID.<br>
             • <code>#&lt;id&gt; @comment &lt;comment text&gt;</code> - Add a comment to a specific ticket by ID.<br>
             • <code>#&lt;id&gt; @update title "&lt;title&gt;" description "&lt;description&gt;"</code> - Update a ticket's title and description.<br>
+            • <code>@board_summary</code> - Show summary of all tickets on the board.<br>
+            • <code>@sprint_summary</code> - Show summary of tickets by sprint.<br>
             • <code>@help</code> - Get information about available commands.<br>
             Feel free to ask me anything related to these commands!
           `);
@@ -178,6 +180,10 @@ class ChatViewProvider {
           } else {
             this._post("❌ Invalid update command format. Please use: #<id> @update title \"<title>\" description \"<description>\"");
           }
+        } else if (command === '@board_summary') {
+          await this._showBoardSummary(organization, project);
+        } else if (command === '@sprint_summary') {
+          await this._showSprintSummary(organization, project);
         } else {
           this._post(`I couldn't understand the command: ${command}`);
         }
@@ -201,6 +207,8 @@ Available Commands:
 - @create_ticket <title> description "<description>" → Create a new ticket.
 - #<id> @comment <comment text> → Add a comment to a ticket.
 - #<id> @update title "<title>" description "<description>" → Update a ticket.
+- @board_summary → Show summary of all tickets on the board.
+- @sprint_summary → Show summary of tickets by sprint.
 
 Strict Rules:
 - If multiple commands are mentioned in a single message, split them into separate outputs in order.
@@ -1101,6 +1109,136 @@ Instructions:
       console.error('Error resetting PAT token:', error);
       vscode.window.showErrorMessage(`Failed to reset PAT token: ${error.message}`);
     }
+  }
+
+  async _showBoardSummary(organization, project) {
+    try {
+      const pat = await this._getPatToken();
+      const client = new AzureDevOpsClient(organization, project, pat);
+      
+      const workItems = await client.getBoardSummary();
+      if (!workItems || workItems.length === 0) {
+        this._post('No work items found on the board.');
+        return;
+      }
+
+      const summary = this._generateOverallTicketSummary(workItems);
+      this._post(summary);
+    } catch (error) {
+      console.error('Error showing board summary:', error);
+      this._post(`❌ Error generating board summary: ${error.message}`);
+    }
+  }
+
+  async _showSprintSummary(organization, project) {
+    try {
+      const pat = await this._getPatToken();
+      const client = new AzureDevOpsClient(organization, project, pat);
+      
+      const workItems = await client.getBoardSummary();
+      if (!workItems || workItems.length === 0) {
+        this._post('No work items found on the board.');
+        return;
+      }
+
+      const summary = this._generateSprintSummary(workItems);
+      this._post(summary);
+    } catch (error) {
+      console.error('Error showing sprint summary:', error);
+      this._post(`❌ Error generating sprint summary: ${error.message}`);
+    }
+  }
+
+  _generateOverallTicketSummary(allWorkItems) {
+    const total = allWorkItems.length;
+    const stateCounts = {
+      Active: 0,
+      Closed: 0,
+      Removed: 0,
+      New: 0,
+      Other: 0
+    };
+
+    const userStats = {};
+
+    for (const wi of allWorkItems) {
+      const state = wi.fields['System.State'];
+      const assignedTo = wi.fields['System.AssignedTo']?.displayName || "Unassigned";
+
+      if (stateCounts[state] !== undefined) {
+        stateCounts[state]++;
+      } else {
+        stateCounts.Other++;
+      }
+
+      if (!userStats[assignedTo]) {
+        userStats[assignedTo] = {};
+      }
+      if (!userStats[assignedTo][state]) {
+        userStats[assignedTo][state] = 0;
+      }
+      userStats[assignedTo][state]++;
+    }
+
+    let summary = `<b>📊 Board Summary</b> - ${total} total tickets<br><br>`;
+    summary += `- <b>Active</b>: ${stateCounts.Active}<br>`;
+    summary += `- <b>Closed</b>: ${stateCounts.Closed}<br>`;
+    summary += `- <b>Removed</b>: ${stateCounts.Removed || 0}<br>`;
+    summary += `- <b>New</b>: ${stateCounts.New || 0}<br>`;
+    if (stateCounts.Other > 0) {
+      summary += `- <b>Other States</b>: ${stateCounts.Other}<br>`;
+    }
+
+    summary += `<br><b>Tickets per user:</b><br>`;
+    for (const [user, states] of Object.entries(userStats)) {
+      const userTotal = Object.values(states).reduce((a, b) => a + b, 0);
+      summary += `- <b>${user}</b>: ${userTotal} tickets<br>`;
+    }
+
+    return summary;
+  }
+
+  _generateSprintSummary(workItems) {
+    const sprintSummary = {};
+
+    for (const wi of workItems) {
+      const sprint = wi.fields['System.IterationPath'] || "Unassigned Sprint";
+      const assignedTo = wi.fields['System.AssignedTo']?.displayName || "Unassigned";
+      const title = wi.fields['System.Title'] || "Untitled";
+      const state = wi.fields['System.State'] || "Unknown";
+      const ticketNumber = wi.id;
+
+      if (!sprintSummary[sprint]) {
+        sprintSummary[sprint] = {};
+      }
+
+      if (!sprintSummary[sprint][assignedTo]) {
+        sprintSummary[sprint][assignedTo] = {};
+      }
+
+      if (!sprintSummary[sprint][assignedTo][state]) {
+        sprintSummary[sprint][assignedTo][state] = [];
+      }
+
+      sprintSummary[sprint][assignedTo][state].push(`${ticketNumber}: ${title}`);
+    }
+
+    let summary = `<b>📊 Sprint Summary</b><br><br>`;
+    for (const [sprint, users] of Object.entries(sprintSummary)) {
+      summary += `<b>Sprint: ${sprint}</b><br>`;
+      for (const [user, states] of Object.entries(users)) {
+        summary += `- <b>${user}</b>:<br>`;
+        for (const [state, tickets] of Object.entries(states)) {
+          summary += `  - <b>${state}</b> (${tickets.length} tickets):<br>`;
+          for (const ticket of tickets) {
+            summary += `    - ${ticket}<br>`;
+          }
+        }
+      }
+      summary += `<br>`;
+    }
+
+    return summary;
   }
 }
 module.exports = { activate, deactivate };

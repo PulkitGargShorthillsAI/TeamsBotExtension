@@ -167,6 +167,63 @@ class AzureDevOpsClient {
     }
     return res.json();
   }
+
+  async getBoardSummary() {
+    await this._loadFetch();
+    const wiqlUrl = `${this.baseUrl}/wit/wiql?api-version=${this.apiVersion}`;
+    
+    const wiqlQuery = {
+      query: `
+        SELECT [System.Id], [System.State], [System.AssignedTo], [System.Title], [System.IterationPath]
+        FROM WorkItems
+        WHERE [System.TeamProject] = @project
+        ORDER BY [System.ChangedDate] DESC
+      `
+    };
+
+    const response = await fetch(wiqlUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...this._getAuthHeader()
+      },
+      body: JSON.stringify(wiqlQuery)
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch board summary: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const workItemRefs = data.workItems || [];
+    const workItemIds = workItemRefs.map(item => item.id);
+
+    if (workItemIds.length === 0) {
+      return [];
+    }
+
+    // Fetch work items in batches of 200
+    const chunkSize = 200;
+    const allWorkItems = [];
+
+    for (let i = 0; i < workItemIds.length; i += chunkSize) {
+      const chunk = workItemIds.slice(i, i + chunkSize).join(",");
+      const batchUrl = `${this.baseUrl}/wit/workitems?ids=${chunk}&fields=System.State,System.AssignedTo,System.Title,System.IterationPath&api-version=${this.apiVersion}`;
+
+      const batchResponse = await fetch(batchUrl, {
+        headers: this._getAuthHeader()
+      });
+
+      if (!batchResponse.ok) {
+        throw new Error(`Failed to fetch work item batch: ${batchResponse.status}`);
+      }
+
+      const batchData = await batchResponse.json();
+      allWorkItems.push(...batchData.value);
+    }
+
+    return allWorkItems;
+  }
 }
 
 module.exports = AzureDevOpsClient;
