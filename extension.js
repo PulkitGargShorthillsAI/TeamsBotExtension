@@ -881,53 +881,49 @@ class ChatViewProvider {
   }
 
 
+  async _storePatToken(patToken) {
+    try {
+      if (!patToken) {
+        throw new Error('PAT token is required.');
+      }
+  
+      // Store the PAT token in globalState
+      await vscode.workspace.getConfiguration().update('teamsBot.patToken', patToken, vscode.ConfigurationTarget.Global);
+      vscode.window.showInformationMessage('PAT token stored successfully.');
+    } catch (error) {
+      console.error('Error storing PAT token:', error);
+      vscode.window.showErrorMessage('Failed to store PAT token.');
+    }
+  }
 
   async _getPatToken() {
     try {
-      const email = await this._getEmail();
-
-      if (!email) {
-        this._post('❌ Please log in to your Azure DevOps account to retrieve the PAT token.');
-        return null;
-      }
-      
-      let patToken = await MySQLClient.getPatToken(email);
-      
+      const patToken = vscode.workspace.getConfiguration().get('teamsBot.patToken');
       if (!patToken) {
-        // Prompt the user to enter the PAT token
-        patToken = await vscode.window.showInputBox({
+        // Prompt the user to enter the PAT token if not found
+        const newPatToken = await vscode.window.showInputBox({
           prompt: 'Enter your Azure DevOps PAT token',
           password: true
         });
-
-        if (!patToken) {
+  
+        if (!newPatToken) {
           throw new Error('PAT token is required.');
         }
-
-        // Store the PAT token in the database
-        await MySQLClient.storePatToken(email, patToken);
-        vscode.window.showInformationMessage('PAT token stored successfully.');
+  
+        // Store the new PAT token
+        await this._storePatToken(newPatToken);
+        return newPatToken;
       }
       return patToken;
     } catch (error) {
-      console.error('Error fetching PAT token:', error);
-      vscode.window.showErrorMessage('Failed to retrieve or store PAT token.');
+      console.error('Error retrieving PAT token:', error);
+      vscode.window.showErrorMessage('Failed to retrieve PAT token.');
       return null;
     }
   }
 
-
-
-
-
   async _resetPatToken() {
     try {
-      const email = await this._getEmail();
-      if (!email) {
-        this._post('❌ Please log in to reset your PAT token.');
-        return;
-      }
-  
       const newPatToken = await vscode.window.showInputBox({
         prompt: 'Enter your new Azure DevOps PAT token',
         password: true
@@ -938,8 +934,8 @@ class ChatViewProvider {
         return;
       }
   
-      // Call the resetPatToken method in the server
-      await MySQLClient.resetPatToken(email, newPatToken);
+      // Store the new PAT token
+      await this._storePatToken(newPatToken);
       vscode.window.showInformationMessage('PAT token reset successfully.');
     } catch (error) {
       console.error('Error resetting PAT token:', error);
@@ -947,5 +943,4 @@ class ChatViewProvider {
     }
   }
 }
-
 module.exports = { activate, deactivate };

@@ -13,6 +13,17 @@
   "activationEvents": [],
   "main": "./extension.js",
   "contributes": {
+    "configuration": {
+      "type": "object",
+      "title": "Teams Bot Settings",
+      "properties": {
+        "teamsBot.patToken": {
+          "type": "string",
+          "default": "",
+          "description": "Azure DevOps Personal Access Token (PAT) for authentication."
+        }
+      }
+    },
     "commands": [
       {
         "command": "teamsBot.helloWorld",
