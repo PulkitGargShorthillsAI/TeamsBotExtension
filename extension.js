@@ -25,6 +25,23 @@ class ChatViewProvider {
     this.extensionUri = extensionUri;
     this.view = null;
     this.pendingTitle = null;
+    this.isLoggedIn = false;
+    this.userEmail = null;
+
+    // Listen for authentication session changes
+    vscode.authentication.onDidChangeSessions(async (e) => {
+      if (e.provider.id === 'microsoft') {
+        // Check if the current session is still valid
+        const session = await vscode.authentication.getSession('microsoft', ['email'], { createIfNone: false });
+        if (!session) {
+          // User has logged out externally
+          this.isLoggedIn = false;
+          this.userEmail = null;
+          this._postMessage({ command: 'updateLoginState', isLoggedIn: false });
+          this._post('👋 You have been logged out.');
+        }
+      }
+    });
   }
 
   resolveWebviewView(webviewView) {
@@ -36,7 +53,11 @@ class ChatViewProvider {
     webviewView.webview.html = this._getHtml();
   
     webviewView.webview.onDidReceiveMessage(async msg => {
-      if (msg.command === 'fetchOrganizations') {
+      if (msg.command === 'login') {
+        await this._handleLogin();
+      } else if (msg.command === 'logout') {
+        await this._handleLogout();
+      } else if (msg.command === 'fetchOrganizations') {
         const organizations = await this._getOrganizations();
         this._postMessage({ command: 'populateOrganizations', organizations });
       } else if (msg.command === 'fetchProjects') {
@@ -258,7 +279,7 @@ class ChatViewProvider {
         }
       }
     } catch (e) {
-      this._post(`❌ Couldn’t fetch tickets: ${e.message}`);
+      this._post(`❌ Couldn't fetch tickets: ${e.message}`);
     }
   }
 
@@ -300,6 +321,62 @@ class ChatViewProvider {
           display: flex;
           flex-direction: column;
           height: 100vh;
+        }
+
+        #login-container {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          height: 100vh;
+          gap: 20px;
+        }
+
+        #login-button {
+          padding: 12px 24px;
+          background-color: var(--vscode-button-background);
+          color: var(--vscode-button-foreground);
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 16px;
+        }
+
+        #login-button:hover {
+          background-color: var(--vscode-button-hoverBackground);
+        }
+
+        #main-container {
+          display: none;
+          flex-direction: column;
+          height: 100vh;
+        }
+
+        #header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 10px;
+          border-bottom: 1px solid var(--vscode-input-border);
+        }
+
+        #user-info {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+
+        #logout-button {
+          padding: 6px 12px;
+          background-color: var(--vscode-button-secondaryBackground);
+          color: var(--vscode-button-secondaryForeground);
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+        }
+
+        #logout-button:hover {
+          background-color: var(--vscode-button-secondaryHoverBackground);
         }
 
         #dropdown-container {
@@ -402,18 +479,19 @@ class ChatViewProvider {
           flex-wrap: wrap;
           position: sticky;
         }
-
-        header{
-          display: flex;
-          flex-direction: column;
-          position: sticky;
-          top: 0;
-          z-index: 1;
-        }
       </style>
     </head>
     <body>
-      <header>
+      <div id="login-container">
+        <button id="login-button">Login with Microsoft</button>
+      </div>
+      <div id="main-container">
+        <div id="header">
+          <div id="user-info">
+            <span id="user-email"></span>
+          </div>
+          <button id="logout-button">Logout</button>
+        </div>
         <div id="dropdown-container">
           <select id="organization-dropdown">
             <option value="" disabled selected>Select Organization</option>
@@ -423,20 +501,25 @@ class ChatViewProvider {
           </select>
         </div>
         <div id="quick-actions">
-            <button class="quick-action" data-text="@view_tickets">View Tickets</button>
-            <button class="quick-action" data-text="@help">Help</button>
-            <button class="quick-action" data-text="@create_ticket">Create Ticket</button>
+          <button class="quick-action" data-text="@view_tickets">View Tickets</button>
+          <button class="quick-action" data-text="@help">Help</button>
+          <button class="quick-action" data-text="@create_ticket">Create Ticket</button>
         </div>
-      </header>
-      <div id="chat-container">
-        <div id="messages"></div>
-        <div id="input-container">
-          <input type="text" id="message-input" placeholder="Type a message..." />
-          <button id="send-button">Send</button>
+        <div id="chat-container">
+          <div id="messages"></div>
+          <div id="input-container">
+            <input type="text" id="message-input" placeholder="Type a message..." />
+            <button id="send-button">Send</button>
+          </div>
         </div>
       </div>
       <script>
         const vscode = acquireVsCodeApi();
+        const loginContainer = document.getElementById('login-container');
+        const mainContainer = document.getElementById('main-container');
+        const loginButton = document.getElementById('login-button');
+        const logoutButton = document.getElementById('logout-button');
+        const userEmailSpan = document.getElementById('user-email');
         const orgDropdown = document.getElementById('organization-dropdown');
         const projectDropdown = document.getElementById('project-dropdown');
         const messagesContainer = document.getElementById('messages');
@@ -447,13 +530,21 @@ class ChatViewProvider {
         let selectedOrganization = null;
         let selectedProject = null;
 
+        loginButton.addEventListener('click', () => {
+          vscode.postMessage({ command: 'login' });
+        });
+
+        logoutButton.addEventListener('click', () => {
+          vscode.postMessage({ command: 'logout' });
+        });
+
         orgDropdown.addEventListener('change', () => {
-          selectedOrganization = orgDropdown.options[orgDropdown.selectedIndex].textContent; // Get the organization name
+          selectedOrganization = orgDropdown.options[orgDropdown.selectedIndex].textContent;
           vscode.postMessage({ command: 'fetchProjects', organization: selectedOrganization });
         });
 
         projectDropdown.addEventListener('change', () => {
-          selectedProject = projectDropdown.options[projectDropdown.selectedIndex].textContent; // Get the project name
+          selectedProject = projectDropdown.options[projectDropdown.selectedIndex].textContent;
         });
 
         sendButton.addEventListener('click', sendMessage);
@@ -482,13 +573,21 @@ class ChatViewProvider {
           messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
 
-        // Fetch organizations and populate the dropdown
-        vscode.postMessage({ command: 'fetchOrganizations' });
-
         window.addEventListener('message', event => {
           const message = event.data;
 
-          if (message.command === 'populateOrganizations') {
+          if (message.command === 'updateLoginState') {
+            if (message.isLoggedIn) {
+              loginContainer.style.display = 'none';
+              mainContainer.style.display = 'flex';
+              userEmailSpan.textContent = message.email;
+              vscode.postMessage({ command: 'fetchOrganizations' });
+            } else {
+              loginContainer.style.display = 'flex';
+              mainContainer.style.display = 'none';
+              userEmailSpan.textContent = '';
+            }
+          } else if (message.command === 'populateOrganizations') {
             populateDropdown(orgDropdown, message.organizations);
           } else if (message.command === 'populateProjects') {
             populateDropdown(projectDropdown, message.projects);
@@ -507,7 +606,6 @@ class ChatViewProvider {
             dropdown.appendChild(option);
           });
         }
-
 
         quickActionButtons.forEach(button => {
           button.addEventListener('click', () => {
@@ -839,6 +937,62 @@ class ChatViewProvider {
       console.error('Error fetching PAT token:', error);
       vscode.window.showErrorMessage('Failed to retrieve or store PAT token.');
       return null;
+    }
+  }
+
+  async _handleLogin() {
+    try {
+      const session = await vscode.authentication.getSession('microsoft', ['email'], { createIfNone: true });
+      if (!session.account || !session.account.label) {
+        this._post('❌ Failed to authenticate with Microsoft.');
+        return;
+      }
+
+      const email = session.account.label;
+      if (!email.endsWith('@shorthills.ai')) {
+        vscode.window.showErrorMessage('Please use your Shorthills email address to login.');
+        return;
+      }
+
+      this.userEmail = email;
+      let patToken = await MySQLClient.getPatToken(email);
+
+      if (!patToken) {
+        patToken = await vscode.window.showInputBox({
+          prompt: 'Enter your Azure DevOps PAT token',
+          password: true
+        });
+
+        if (!patToken) {
+          this._post('❌ PAT token is required.');
+          return;
+        }
+
+        await MySQLClient.storePatToken(email, patToken);
+        vscode.window.showInformationMessage('PAT token stored successfully.');
+      }
+
+      this.isLoggedIn = true;
+      this._postMessage({ command: 'updateLoginState', isLoggedIn: true, email: this.userEmail });
+      this._post('✅ Successfully logged in!');
+    } catch (error) {
+      console.error('Login error:', error);
+      this._post(`❌ Login failed: ${error.message}`);
+    }
+  }
+
+  async _handleLogout() {
+    try {
+      // Clear the Microsoft authentication session by getting a new session with clearSessionPreference
+      await vscode.authentication.getSession('microsoft', ['email'], { clearSessionPreference: true });
+      
+      this.isLoggedIn = false;
+      this.userEmail = null;
+      this._postMessage({ command: 'updateLoginState', isLoggedIn: false });
+      this._post('👋 Logged out successfully.');
+    } catch (error) {
+      console.error('Logout error:', error);
+      this._post(`❌ Logout failed: ${error.message}`);
     }
   }
 }
