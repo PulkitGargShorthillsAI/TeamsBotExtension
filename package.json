@@ -17,10 +17,10 @@
       "type": "object",
       "title": "Teams Bot Settings",
       "properties": {
-        "teamsBot.patToken": {
-          "type": "string",
-          "default": "",
-          "description": "Azure DevOps Personal Access Token (PAT) for authentication."
+        "teamsBot.patTokens": {
+          "type": "object",
+          "default": {},
+          "description": "Azure DevOps Personal Access Tokens (PAT) for authentication, stored per user."
         }
       }
     },

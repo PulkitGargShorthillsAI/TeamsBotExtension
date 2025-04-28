@@ -1,10 +1,19 @@
 // extension.js
 const vscode = require('vscode');
 const path = require('path');
-const MySQLClient = require('./backend/server');
 require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const AzureDevOpsClient = require('./azureDevOpsClient');
+
+let fetch; // Will be dynamically imported
+
+async function initializeFetch() {
+  if (!fetch) {
+    const fetchModule = await import('node-fetch');
+    fetch = fetchModule.default;
+  }
+  return fetch;
+}
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -296,7 +305,7 @@ class ChatViewProvider {
         }
       }
     } catch (e) {
-      this._post(`❌ Couldn’t fetch tickets: ${e.message}`);
+      this._post(`❌ Couldn't fetch tickets: ${e.message}`);
     }
   }
 
@@ -754,16 +763,26 @@ class ChatViewProvider {
 
   async _getProjects(organizationName) {
     try {
+      console.log('Attempting to fetch projects...');
       const pat = await this._getPatToken();
-      if (!organizationName || !pat) throw new Error('Missing organization name or AZURE_PAT.');
-  
+      if (!organizationName || !pat) {
+        console.error('Missing organization name or PAT token');
+        throw new Error('Missing organization name or AZURE_PAT.');
+      }
+      console.log(`Fetching projects for organization: ${organizationName}`);
+
+      await initializeFetch();
       const url = `https://dev.azure.com/${organizationName}/_apis/projects?api-version=7.1-preview.4`;
       const authHeader = { Authorization: `Basic ${Buffer.from(`:${pat}`).toString('base64')}` };
-  
+
       const response = await fetch(url, { headers: authHeader });
-      if (!response.ok) throw new Error(`Failed to fetch projects: ${response.status} ${response.statusText}`);
-  
+      if (!response.ok) {
+        console.error('Failed to fetch projects:', response.status);
+        throw new Error(`Failed to fetch projects: ${response.status} ${response.statusText}`);
+      }
+
       const data = await response.json();
+      console.log('Projects fetched successfully');
       return data.value.map(project => ({ id: project.id, name: project.name }));
     } catch (error) {
       console.error('Error fetching projects:', error);
@@ -778,23 +797,40 @@ class ChatViewProvider {
 
   async _getOrganizations() {
     try {
+      console.log('Attempting to fetch organizations...');
       const pat = await this._getPatToken();
-      if (!pat) throw new Error('Missing AZURE_PAT in environment variables.');
-  
+      if (!pat) {
+        console.error('Missing PAT token');
+        throw new Error('Missing AZURE_PAT in environment variables.');
+      }
+      console.log('PAT token retrieved successfully');
+
+      await initializeFetch();
       const profileUrl = `https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1-preview.1`;
       const authHeader = { Authorization: `Basic ${Buffer.from(`:${pat}`).toString('base64')}` };
-  
+      console.log('Fetching user profile...');
+
       const profileResponse = await fetch(profileUrl, { headers: authHeader });
-      if (!profileResponse.ok) throw new Error('Failed to fetch user profile.');
-  
+      if (!profileResponse.ok) {
+        console.error('Failed to fetch user profile:', profileResponse.status);
+        throw new Error('Failed to fetch user profile.');
+      }
+
       const profileData = await profileResponse.json();
       const memberId = profileData.id;
-  
+      console.log('User profile fetched successfully');
+
       const orgsUrl = `https://app.vssps.visualstudio.com/_apis/accounts?memberId=${memberId}&api-version=7.1-preview.1`;
+      console.log('Fetching organizations...');
+
       const orgsResponse = await fetch(orgsUrl, { headers: authHeader });
-      if (!orgsResponse.ok) throw new Error('Failed to fetch organizations.');
-  
+      if (!orgsResponse.ok) {
+        console.error('Failed to fetch organizations:', orgsResponse.status);
+        throw new Error('Failed to fetch organizations.');
+      }
+
       const orgsData = await orgsResponse.json();
+      console.log('Organizations fetched successfully');
       return orgsData.value.map(org => ({ id: org.accountId, name: org.accountName }));
     } catch (error) {
       console.error('Error fetching organizations:', error);
@@ -883,12 +919,32 @@ class ChatViewProvider {
 
   async _storePatToken(patToken) {
     try {
+      console.log('Attempting to store PAT token...');
       if (!patToken) {
+        console.error('PAT token is missing');
         throw new Error('PAT token is required.');
       }
-  
-      // Store the PAT token in globalState
-      await vscode.workspace.getConfiguration().update('teamsBot.patToken', patToken, vscode.ConfigurationTarget.Global);
+
+      const email = await this._getEmail();
+      if (!email) {
+        console.error('User email is missing');
+        throw new Error('User email is required.');
+      }
+      console.log(`Storing PAT token for user: ${email}`);
+
+      // Get existing PAT tokens
+      const patTokens = vscode.workspace.getConfiguration().get('teamsBot.patTokens', {});
+      console.log('Current PAT tokens:', Object.keys(patTokens));
+      
+      // Update or create new entry
+      patTokens[email] = {
+        pat: patToken,
+        timestamp: new Date().toISOString()
+      };
+
+      // Store the updated PAT tokens
+      await vscode.workspace.getConfiguration().update('teamsBot.patTokens', patTokens, vscode.ConfigurationTarget.Global);
+      console.log(`Successfully stored PAT token for user: ${email}`);
       vscode.window.showInformationMessage('PAT token stored successfully.');
     } catch (error) {
       console.error('Error storing PAT token:', error);
@@ -898,23 +954,40 @@ class ChatViewProvider {
 
   async _getPatToken() {
     try {
-      const patToken = vscode.workspace.getConfiguration().get('teamsBot.patToken');
-      if (!patToken) {
+      console.log('Attempting to retrieve PAT token...');
+      const email = await this._getEmail();
+      if (!email) {
+        console.error('User email is missing');
+        throw new Error('User email is required.');
+      }
+      console.log(`Retrieving PAT token for user: ${email}`);
+
+      // Get all PAT tokens
+      const patTokens = vscode.workspace.getConfiguration().get('teamsBot.patTokens', {});
+      console.log('Available PAT tokens:', Object.keys(patTokens));
+      const userPat = patTokens[email];
+
+      if (!userPat) {
+        console.log(`No existing PAT token found for user: ${email}`);
         // Prompt the user to enter the PAT token if not found
         const newPatToken = await vscode.window.showInputBox({
           prompt: 'Enter your Azure DevOps PAT token',
           password: true
         });
-  
+
         if (!newPatToken) {
+          console.error('User cancelled PAT token input');
           throw new Error('PAT token is required.');
         }
-  
+
+        console.log(`New PAT token received for user: ${email}`);
         // Store the new PAT token
         await this._storePatToken(newPatToken);
         return newPatToken;
       }
-      return patToken;
+
+      console.log(`Successfully retrieved PAT token for user: ${email}`);
+      return userPat.pat;
     } catch (error) {
       console.error('Error retrieving PAT token:', error);
       vscode.window.showErrorMessage('Failed to retrieve PAT token.');
@@ -924,19 +997,53 @@ class ChatViewProvider {
 
   async _resetPatToken() {
     try {
+      console.log('Attempting to reset PAT token...');
+      const email = await this._getEmail();
+      if (!email) {
+        console.error('User email is missing');
+        throw new Error('User email is required.');
+      }
+      console.log(`Resetting PAT token for user: ${email}`);
+
       const newPatToken = await vscode.window.showInputBox({
         prompt: 'Enter your new Azure DevOps PAT token',
         password: true
       });
-  
+
       if (!newPatToken) {
+        console.log('User cancelled PAT token reset');
         vscode.window.showErrorMessage('PAT token reset canceled.');
         return;
       }
-  
-      // Store the new PAT token
-      await this._storePatToken(newPatToken);
+
+      // Get existing PAT tokens
+      const patTokens = vscode.workspace.getConfiguration().get('teamsBot.patTokens', {});
+      console.log('Current PAT tokens:', Object.keys(patTokens));
+      
+      // Update the PAT token for the current user
+      patTokens[email] = {
+        pat: newPatToken,
+        timestamp: new Date().toISOString()
+      };
+
+      // Store the updated PAT tokens
+      await vscode.workspace.getConfiguration().update('teamsBot.patTokens', patTokens, vscode.ConfigurationTarget.Global);
+      console.log(`Successfully reset PAT token for user: ${email}`);
       vscode.window.showInformationMessage('PAT token reset successfully.');
+
+      // Clear dropdowns
+      this._postMessage({ command: 'clearDropdowns' });
+
+      // Fetch and populate organizations immediately
+      console.log('Fetching organizations with new PAT token...');
+      const organizations = await this._getOrganizations();
+      if (organizations && organizations.length > 0) {
+        console.log('Populating organizations dropdown...');
+        this._postMessage({ command: 'populateOrganizations', organizations });
+      } else {
+        console.error('No organizations found with new PAT token');
+        this._post('❌ No organizations found. Please check your PAT token permissions.');
+      }
     } catch (error) {
       console.error('Error resetting PAT token:', error);
       vscode.window.showErrorMessage(`Failed to reset PAT token: ${error.message}`);
