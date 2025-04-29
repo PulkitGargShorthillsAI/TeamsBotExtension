@@ -6,7 +6,17 @@ TeamsBot is a VS Code extension that integrates with Azure DevOps Boards and Goo
 
 ---
 
-## 1. Creating a Global Access PAT Token on Azure Boards
+## 1. Update VS Code 
+
+### Install VS Code on Debian/Ubuntu
+
+```bash
+wget 'https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-x64' -O /tmp/code_latest_amd64.deb
+```
+``` bash
+sudo dpkg -i /tmp/code_latest_amd64.deb
+```
+## 2. Creating a Global Access PAT Token on Azure Boards
 
 1. **Sign in to Azure DevOps**  
    Go to [https://dev.azure.com/](https://dev.azure.com/) and sign in with your organization account.
@@ -34,7 +44,7 @@ TeamsBot is a VS Code extension that integrates with Azure DevOps Boards and Goo
 
 ---
 
-## 2. Installing and Setting Up the Extension
+## 3. Installing and Setting Up the Extension
 
 1. **Install the Extension**
    - Open VS Code.
@@ -47,7 +57,7 @@ TeamsBot is a VS Code extension that integrates with Azure DevOps Boards and Goo
 
 ---
 
-## 3. Authentication and Configuration
+## 4. Authentication and Configuration
 
 1. **Sign in with Microsoft**
    - The extension will prompt you to sign in with your Microsoft account.
@@ -62,7 +72,7 @@ TeamsBot is a VS Code extension that integrates with Azure DevOps Boards and Goo
 
 ---
 
-## 4. Commands and Functionality
+## 5. Commands and Functionality
 
 You can interact with TeamsBot using natural language or the following commands:
 
@@ -114,7 +124,7 @@ You can interact with TeamsBot using natural language or the following commands:
 
 ---
 
-## 5. Usage Tips
+## 6. Usage Tips
 
 - **Quick Actions:**  
   Use the quick action buttons at the top of the chat for common commands.
@@ -130,7 +140,7 @@ You can interact with TeamsBot using natural language or the following commands:
 
 ---
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
 - **PAT Token Issues:**  
   - Make sure your PAT token has the correct scopes.
@@ -150,14 +160,14 @@ You can interact with TeamsBot using natural language or the following commands:
 
 ---
 
-## 7. Logging and Privacy
+## 8. Logging and Privacy
 
 - All interactions (user input and bot output) may be logged for audit and improvement purposes.  
 - No PAT tokens or sensitive credentials are stored in logs.
 
 ---
 
-## 8. Support
+## 9. Support
 
 For issues, feature requests, or help, contact the extension maintainer or open an issue in the repository.
 
