@@ -1447,7 +1447,13 @@ class ChatViewProvider {
   async _logInteraction(email, userInput, botOutput) {
     try {
       await initializeFetch();
-      const response = await fetch('http://localhost:8000/log', {
+      const logUrl = process.env.LOGGING_URL;
+      if (!logUrl) {
+        console.error('LOGGING_URL environment variable is not set.');
+        return;
+      }
+
+      const response = await fetch(logUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
