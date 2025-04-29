@@ -98,11 +98,12 @@ class ChatViewProvider {
 
   _removeJsonWrapper(text) {
     // Check if the text starts with ```json and ends with ```
-    if (text.startsWith("```json") && text.endsWith("```")) {
-      const lines = text.split("\n");
-      return lines.slice(1, -1).join("\n"); // Remove the first and last line
-    }
-    return text;
+    const output = text.replace(/```json|```/g, '').trim();
+
+    console.log('Output after removing JSON wrapper:', output);
+
+    
+    return output;
   }
   
 
@@ -129,7 +130,7 @@ class ChatViewProvider {
   
       for (const command of commands) {
         if (command.startsWith('@create_ticket')) {
-          const match = command.match(/^@create_ticket\s+(.+?)(?:\s+description\s+"(.+)")?$/i);
+          const match = command.match(/^@create_ticket\s+(.+?)(?:\s+description\s+'(.+)')?$/i);
           if (match) {
             const title = match[1].trim();
             const description = match[2] ? match[2].trim() : null;
@@ -243,7 +244,7 @@ class ChatViewProvider {
       Output: ["@view_tickets 1345"]
 
       User: "Create a ticket, I built a chatbot using Gemini and Pinecone, tested it fully."
-      Output: ["@create_ticket Chatbot Development Using Gemini and Pinecone description \"Developed a chatbot leveraging Gemini LLM and Pinecone as a vector store. Completed unit testing to ensure functionality.\""]
+      Output: ["@create_ticket Chatbot Development Using Gemini and Pinecone description \'Developed a chatbot leveraging Gemini LLM and Pinecone as a vector store. Completed unit testing to ensure functionality.\'"]
 
       User: "Update ticket 1348, stored PAT token locally instead of MySQL"
       Output: ["#1348 @update title \"Store PAT Token Locally\" description \"Implemented functionality to securely store the PAT token locally within the VS Code extension, removing dependency on a remote MySQL server.\""]
@@ -394,7 +395,12 @@ class ChatViewProvider {
         this._post(`❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`);
         return;
       }
+
+      // Get the latest iteration
       const client = new AzureDevOpsClient(org, proj, pat);
+      const iterations = await client.getIterations();
+      const latestIteration = iterations[iterations.length - 1]; // Get the last iteration
+
       const patch = [
         { op: 'add', path: '/fields/System.Title', value: title },
         { op: 'add', path: '/fields/System.Description', value: htmlDesc },
@@ -403,6 +409,16 @@ class ChatViewProvider {
         { op: 'add', path: '/fields/Microsoft.VSTS.Common.Priority', value: process.env.DEFAULT_PRIORITY || 1 },
         { op: 'add', path: '/fields/Microsoft.VSTS.Common.Activity', value: process.env.DEFAULT_ACTIVITY || 'Development' }
       ];
+
+      // Add iteration path if available
+      if (latestIteration) {
+        patch.push({ 
+          op: 'add', 
+          path: '/fields/System.IterationPath', 
+          value: latestIteration.path 
+        });
+      }
+
       const wi = await client.createWorkItem('Task', patch);
       this._post(`✅ Created <b>#${wi.id}</b> "${title}"<br>${htmlDesc}`);
     } catch (e) {
@@ -525,17 +541,19 @@ class ChatViewProvider {
 
       #chat-container {
         flex-grow: 1;
-        overflow-y: auto; /* Make chat scrollable */
+        overflow-y: auto;
         padding: 16px;
         display: flex;
         flex-direction: column;
         gap: 12px;
+        scroll-behavior: smooth;
       }
 
       #messages {
         display: flex;
         flex-direction: column;
         gap: 12px;
+        min-height: 100%;
       }
 
       .message {
@@ -644,8 +662,28 @@ class ChatViewProvider {
         const sendButton = document.getElementById('send-button');
         const quickActionButtons = document.querySelectorAll('.quick-action');
         const resetPatButton = document.getElementById('reset-pat-button');
+        const chatContainer = document.getElementById('chat-container');
         let selectedOrganization = null;
         let selectedProject = null;
+
+        // Auto-resize textarea
+        messageInput.addEventListener('input', function() {
+          this.style.height = 'auto';
+          this.style.height = (this.scrollHeight) + 'px';
+        });
+
+        // Auto-scroll to bottom when new messages are added
+        function scrollToBottom() {
+          chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function appendMessage(text, sender) {
+          const messageElement = document.createElement('div');
+          messageElement.classList.add('message', sender === 'user' ? 'user-message' : 'bot-message');
+          messageElement.innerHTML = text;
+          messagesContainer.appendChild(messageElement);
+          scrollToBottom();
+        }
 
         resetPatButton.addEventListener('click', () => {
           vscode.postMessage({ command: 'resetPatToken' });
@@ -684,14 +722,6 @@ class ChatViewProvider {
             vscode.postMessage({ command: 'sendMessage', text, organization: selectedOrganization, project: selectedProject });
             messageInput.value = '';
           }
-        }
-
-        function appendMessage(text, sender) {
-          const messageElement = document.createElement('div');
-          messageElement.classList.add('message', sender === 'user' ? 'user-message' : 'bot-message');
-          messageElement.innerHTML = text;
-          messagesContainer.appendChild(messageElement);
-          messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
 
         // Fetch organizations and populate the dropdown

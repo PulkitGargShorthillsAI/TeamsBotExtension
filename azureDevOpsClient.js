@@ -100,6 +100,9 @@ class AzureDevOpsClient {
     }
     const workItem = await res.json();
 
+    console.log(`Fetched work item ${workItemId}:`, workItem);
+    
+
     // Extract Created By and Assigned To
     const createdByField = workItem.fields['System.CreatedBy']['displayName'];
     const assignedToField = workItem.fields['System.AssignedTo']['displayName'];
@@ -223,6 +226,22 @@ class AzureDevOpsClient {
     }
 
     return allWorkItems;
+  }
+
+  async getIterations() {
+    await this._loadFetch();
+    const url = `${this.baseUrl}/work/teamsettings/iterations?api-version=${this.apiVersion}`;
+    
+    const response = await fetch(url, {
+      headers: this._getAuthHeader()
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch iterations: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.value || [];
   }
 }
 
