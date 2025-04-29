@@ -665,6 +665,21 @@ class ChatViewProvider {
         const chatContainer = document.getElementById('chat-container');
         let selectedOrganization = null;
         let selectedProject = null;
+        let isProcessing = false; // Add loading state
+
+        // Function to set processing state
+        function setProcessingState(processing) {
+          isProcessing = processing;
+          sendButton.disabled = processing;
+          messageInput.disabled = processing;
+          if (processing) {
+            sendButton.textContent = 'Sending...';
+            sendButton.style.opacity = '0.7';
+          } else {
+            sendButton.textContent = 'Send';
+            sendButton.style.opacity = '1';
+          }
+        }
 
         // Auto-resize textarea
         messageInput.addEventListener('input', function() {
@@ -690,22 +705,23 @@ class ChatViewProvider {
           vscode.postMessage({ command: 'fetchOrganizations' });
         });
 
-
         orgDropdown.addEventListener('change', () => {
-          selectedOrganization = orgDropdown.options[orgDropdown.selectedIndex].textContent; // Get the organization name
+          selectedOrganization = orgDropdown.options[orgDropdown.selectedIndex].textContent;
           vscode.postMessage({ command: 'fetchProjects', organization: selectedOrganization });
         });
 
         projectDropdown.addEventListener('change', () => {
-          selectedProject = projectDropdown.options[projectDropdown.selectedIndex].textContent; // Get the project name
+          selectedProject = projectDropdown.options[projectDropdown.selectedIndex].textContent;
         });
 
         sendButton.addEventListener('click', sendMessage);
         messageInput.addEventListener('keypress', event => {
-          if (event.key === 'Enter') sendMessage();
+          if (event.key === 'Enter' && !isProcessing) sendMessage();
         });
 
         function sendMessage() {
+          if (isProcessing) return; // Prevent sending if already processing
+
           const text = messageInput.value.trim();
           if (!selectedOrganization || !selectedProject) {
             appendMessage('❌ Please select both an organization and a project before proceeding.', 'bot');
@@ -718,6 +734,7 @@ class ChatViewProvider {
             return;
           }
           if (text) {
+            setProcessingState(true); // Set processing state to true
             appendMessage(text, 'user');
             vscode.postMessage({ command: 'sendMessage', text, organization: selectedOrganization, project: selectedProject });
             messageInput.value = '';
@@ -737,6 +754,7 @@ class ChatViewProvider {
             projectDropdown.disabled = false;
           } else if (message.command === 'receiveMessage') {
             appendMessage(message.text, 'bot');
+            setProcessingState(false); // Reset processing state when response is received
           } else if (message.command === 'clearChat') {
             clearChat();
           } else if (message.command === 'clearDropdowns') {
@@ -745,8 +763,9 @@ class ChatViewProvider {
         });
 
         function clearChat() {
-          messagesContainer.innerHTML = ''; // Clear all chat messages
+          messagesContainer.innerHTML = '';
           messageInput.value = '';
+          setProcessingState(false); // Reset processing state when chat is cleared
         }
 
         function clearDropdowns() {
@@ -767,12 +786,13 @@ class ChatViewProvider {
           });
         }
 
-
         quickActionButtons.forEach(button => {
           button.addEventListener('click', () => {
-            const text = button.getAttribute('data-text');
-            messageInput.value = text;
-            messageInput.focus();
+            if (!isProcessing) { // Only allow quick actions if not processing
+              const text = button.getAttribute('data-text');
+              messageInput.value = text;
+              messageInput.focus();
+            }
           });
         });
       </script>
