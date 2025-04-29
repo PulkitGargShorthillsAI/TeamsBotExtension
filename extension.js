@@ -396,10 +396,10 @@ class ChatViewProvider {
         return;
       }
 
-      // Get the latest iteration
+      // Get the current iteration
       const client = new AzureDevOpsClient(org, proj, pat);
       const iterations = await client.getIterations();
-      const latestIteration = iterations[iterations.length - 1]; // Get the last iteration
+      const currentIteration = iterations[0]; // Get the current iteration
 
       const patch = [
         { op: 'add', path: '/fields/System.Title', value: title },
@@ -411,12 +411,15 @@ class ChatViewProvider {
       ];
 
       // Add iteration path if available
-      if (latestIteration) {
+      if (currentIteration) {
         patch.push({ 
           op: 'add', 
           path: '/fields/System.IterationPath', 
-          value: latestIteration.path 
+          value: currentIteration.path 
         });
+        this._post(`ℹ️ Ticket will be assigned to current iteration: ${currentIteration.name}`);
+      } else {
+        this._post(`⚠️ No active iteration found for the current date. Ticket will be created without an iteration.`);
       }
 
       const wi = await client.createWorkItem('Task', patch);

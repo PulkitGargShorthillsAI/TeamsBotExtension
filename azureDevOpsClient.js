@@ -1,3 +1,4 @@
+
 // azureDevOpsClient.js
 let fetch; // will be dynamically imported
 
@@ -241,7 +242,22 @@ class AzureDevOpsClient {
     }
 
     const data = await response.json();
-    return data.value || [];
+    const iterations = data.value || [];
+
+    // Find the current iteration based on the current date
+    const currentDate = new Date();
+    console.log(currentDate);
+    
+    const currentIteration = iterations.find(iteration => {
+      
+      const startDate = new Date(iteration.attributes.startDate);
+      console.log(startDate);
+      
+      const finishDate = new Date(iteration.attributes.finishDate);
+      return currentDate >= startDate && currentDate <= finishDate;
+    });
+
+    return currentIteration ? [currentIteration] : [];
   }
 }
 
