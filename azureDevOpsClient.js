@@ -1,3 +1,4 @@
+
 // azureDevOpsClient.js
 let fetch; // will be dynamically imported
 
@@ -100,6 +101,9 @@ class AzureDevOpsClient {
     }
     const workItem = await res.json();
 
+    console.log(`Fetched work item ${workItemId}:`, workItem);
+    
+
     // Extract Created By and Assigned To
     const createdByField = workItem.fields['System.CreatedBy']['displayName'];
     const assignedToField = workItem.fields['System.AssignedTo']['displayName'];
@@ -143,6 +147,117 @@ class AzureDevOpsClient {
       throw new Error(`HTTP ${res.status}: ${errText}`);
     }
     return res.json();
+  }
+
+  async updateWorkItem(workItemId, title, description) {
+    await this._loadFetch();
+    const url = `${this.baseUrl}/wit/workitems/${workItemId}?api-version=${this.apiVersion}`;
+    const patchDocument = [
+      { op: 'replace', path: '/fields/System.Title', value: title },
+      { op: 'replace', path: '/fields/System.Description', value: description }
+    ];
+    const headers = {
+      "Content-Type": "application/json-patch+json",
+      ...this._getAuthHeader()
+    };
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify(patchDocument)
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errText}`);
+    }
+    return res.json();
+  }
+
+  async getBoardSummary() {
+    await this._loadFetch();
+    const wiqlUrl = `${this.baseUrl}/wit/wiql?api-version=${this.apiVersion}`;
+    
+    const wiqlQuery = {
+      query: `
+        SELECT [System.Id], [System.State], [System.AssignedTo], [System.Title], [System.IterationPath]
+        FROM WorkItems
+        WHERE [System.TeamProject] = @project
+        ORDER BY [System.ChangedDate] DESC
+      `
+    };
+
+    const response = await fetch(wiqlUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...this._getAuthHeader()
+      },
+      body: JSON.stringify(wiqlQuery)
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch board summary: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const workItemRefs = data.workItems || [];
+    const workItemIds = workItemRefs.map(item => item.id);
+
+    if (workItemIds.length === 0) {
+      return [];
+    }
+
+    // Fetch work items in batches of 200
+    const chunkSize = 200;
+    const allWorkItems = [];
+
+    for (let i = 0; i < workItemIds.length; i += chunkSize) {
+      const chunk = workItemIds.slice(i, i + chunkSize).join(",");
+      const batchUrl = `${this.baseUrl}/wit/workitems?ids=${chunk}&fields=System.State,System.AssignedTo,System.Title,System.IterationPath&api-version=${this.apiVersion}`;
+
+      const batchResponse = await fetch(batchUrl, {
+        headers: this._getAuthHeader()
+      });
+
+      if (!batchResponse.ok) {
+        throw new Error(`Failed to fetch work item batch: ${batchResponse.status}`);
+      }
+
+      const batchData = await batchResponse.json();
+      allWorkItems.push(...batchData.value);
+    }
+
+    return allWorkItems;
+  }
+
+  async getIterations() {
+    await this._loadFetch();
+    const url = `${this.baseUrl}/work/teamsettings/iterations?api-version=${this.apiVersion}`;
+    
+    const response = await fetch(url, {
+      headers: this._getAuthHeader()
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch iterations: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const iterations = data.value || [];
+
+    // Find the current iteration based on the current date
+    const currentDate = new Date();
+    console.log(currentDate);
+    
+    const currentIteration = iterations.find(iteration => {
+      
+      const startDate = new Date(iteration.attributes.startDate);
+      console.log(startDate);
+      
+      const finishDate = new Date(iteration.attributes.finishDate);
+      return currentDate >= startDate && currentDate <= finishDate;
+    });
+
+    return currentIteration ? [currentIteration] : [];
   }
 }
 
