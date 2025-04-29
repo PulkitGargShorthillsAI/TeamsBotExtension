@@ -182,7 +182,7 @@ class ChatViewProvider {
             await this._addCommentToWorkItem(workItemId, commentText, organization, project);
           }
         } else if (command.startsWith('#') && command.includes('@update')) {
-          const match = command.match(/^#(\d+)\s+@update\s+title\s+"(.+?)"\s+description\s+"(.+?)"/i);
+          const match = command.match(/^#(\d+)\s+@update\s+title\s+'(.+?)'\s+description\s+'(.+?)'/i);
           if (match) {
             const workItemId = parseInt(match[1], 10);
             const title = match[2].trim();
@@ -273,7 +273,7 @@ class ChatViewProvider {
       Output: ["@create_ticket Chatbot Development Using Gemini and Pinecone description \'Developed a chatbot leveraging Gemini LLM and Pinecone as a vector store. Completed unit testing to ensure functionality.\'"]
 
       User: "Update ticket 1348, stored PAT token locally instead of MySQL"
-      Output: ["#1348 @update title \"Store PAT Token Locally\" description \"Implemented functionality to securely store the PAT token locally within the VS Code extension, removing dependency on a remote MySQL server.\""]
+      Output: ["#1348 @update title \'Store PAT Token Locally\' description \'Implemented functionality to securely store the PAT token locally within the VS Code extension, removing dependency on a remote MySQL server.\'"]
 
       User: "Comment on ticket 1234 that this needs urgent attention and then show it to me"
       Output: ["#1234 @comment this needs urgent attention", "@view_tickets 1234"]
