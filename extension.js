@@ -48,6 +48,7 @@ class ChatViewProvider {
     this.extensionUri = extensionUri;
     this.view = null;
     this.pendingTitle = null;
+    this.lastBotMessage = '';
   }
 
   resolveWebviewView(webviewView) {
@@ -112,11 +113,13 @@ class ChatViewProvider {
       const email = await this._getEmail();
       if (!email) {
         this._post('❌ Please log in with an authorized email to use the chatbot.');
+        await this._logInteraction(email, text, '❌ Please log in with an authorized email to use the chatbot.');
         return;
       }
 
       if (!organization || !project) {
         this._post('❌ Please select both an organization and a project before proceeding.');
+        await this._logInteraction(email, text, '❌ Please select both an organization and a project before proceeding.');
         return;
       }
   
@@ -124,7 +127,9 @@ class ChatViewProvider {
       const commands = await this._getCommandsFromGemini(text);
   
       if (!commands || commands.length === 0) {
-        this._post("I couldn't understand your request. Please try again.");
+        const errorMessage = "I couldn't understand your request. Please try again.";
+        this._post(errorMessage);
+        await this._logInteraction(email, text, errorMessage);
         return;
       }
   
@@ -139,12 +144,14 @@ class ChatViewProvider {
               const structured = await this._structureDesc(description);
               await this._makeTicket(title, structured, organization, project);
             } else {
-              this._post(`Got it! Title: <b>${title}</b><br>
-                Please describe what needs to be done in simple terms, or type "skip", "leave it blank", or "leave blank" to proceed without a description.`);
+              const message = `Got it! Title: <b>${title}</b><br>
+                Please describe what needs to be done in simple terms, or type "skip", "leave it blank", or "leave blank" to proceed without a description.`;
+              this._post(message);
+              await this._logInteraction(email, text, message);
             }
           }
         } else if (command === '@help') {
-          this._post(`
+          const helpMessage = `
             <b>Here are the commands you can use:</b><br>
             • <code>@create_ticket &lt;title&gt;</code> - Create a new ticket.<br>
             • <code>@view_tickets</code> - View your open tickets.<br>
@@ -156,7 +163,9 @@ class ChatViewProvider {
             • <code>@query_tickets &lt;query&gt;</code> - Query tickets by name or sprint (e.g., "show me all tickets of John" or "show me tickets in sprint 2").<br>
             • <code>@help</code> - Get information about available commands.<br>
             Feel free to ask me anything related to these commands!
-          `);
+          `;
+          this._post(helpMessage);
+          await this._logInteraction(email, text, helpMessage);
         } else if (command === '@view_tickets') {
           await this._showTickets(organization, project);
         } else if (command.startsWith('@view_tickets')) {
@@ -180,7 +189,9 @@ class ChatViewProvider {
             const description = match[3].trim();
             await this._updateTicket(workItemId, title, description, organization, project);
           } else {
-            this._post("❌ Invalid update command format. Please use: #<id> @update title \"<title>\" description \"<description>\"");
+            const errorMessage = "❌ Invalid update command format. Please use: #<id> @update title \"<title>\" description \"<description>\"";
+            this._post(errorMessage);
+            await this._logInteraction(email, text, errorMessage);
           }
         } else if (command === '@board_summary') {
           await this._showBoardSummary(organization, project);
@@ -190,13 +201,28 @@ class ChatViewProvider {
           const query = command.substring('@query_tickets '.length).trim();
           await this._processTicketQuery(query, organization, project);
         } else {
-          this._post(`I couldn't understand the command: ${command}`);
+          const errorMessage = `I couldn't understand the command: ${command}`;
+          this._post(errorMessage);
+          await this._logInteraction(email, text, errorMessage);
         }
       }
     } catch (error) {
       console.error('Error handling user message:', error);
-      this._post(`❌ An error occurred: ${error.message}`);
+      const errorMessage = `❌ An error occurred: ${error.message}`;
+      this._post(errorMessage);
+      await this._logInteraction(email, text, errorMessage);
     }
+  }
+
+  _getLastBotMessage() {
+    // Get the last message from the messages container
+    const messages = document.getElementById('messages');
+    if (!messages) return '';
+    
+    const botMessages = messages.getElementsByClassName('bot-message');
+    if (botMessages.length === 0) return '';
+    
+    return botMessages[botMessages.length - 1].innerHTML;
   }
 
   async _getCommandsFromGemini(userMessage) {
@@ -281,13 +307,16 @@ class ChatViewProvider {
 
   async _processTicketQuery(query, organization, project) {
     try {
+      const email = await this._getEmail();
       // First get the sprint summary
       const pat = await this._getPatToken();
       const client = new AzureDevOpsClient(organization, project, pat);
       const workItems = await client.getBoardSummary();
       
       if (!workItems || workItems.length === 0) {
-        this._post('No work items found on the board.');
+        const message = 'No work items found on the board.';
+        this._post(message);
+        await this._logInteraction(email, `@query_tickets ${query}`, message);
         return;
       }
 
@@ -346,15 +375,14 @@ class ChatViewProvider {
 
       const response = await model.generateContent(prompt);
       const result = response.response.text();
-
-      console.log(result);
       const output = result.replace(/```html|```/g, '').trim();
-
       
       this._post(output);
+      await this._logInteraction(email, `@query_tickets ${query}`, output);
     } catch (error) {
-      console.error('Error processing ticket query:', error);
-      this._post(`❌ Error processing query: ${error.message}`);
+      const errorMessage = `❌ Error processing query: ${error.message}`;
+      this._post(errorMessage);
+      await this._logInteraction(email, `@query_tickets ${query}`, errorMessage);
     }
   }
 
@@ -431,46 +459,53 @@ class ChatViewProvider {
 
   async _showTickets(organization, project, workItemId = null) {
     try {
-      
-      console.log("Inside showTickets");
-      const org = organization, proj = project, pat = await this._getPatToken();
-
-      
-      const client = new AzureDevOpsClient(org, proj, pat);
       const email = await this._getEmail();
-        if (email === null) {
-        this._post(`❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`);
+      if (email === null) {
+        const errorMessage = `❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`;
+        this._post(errorMessage);
+        await this._logInteraction(email, '@view_tickets', errorMessage);
         return;
       }
+
+      const pat = await this._getPatToken();
+      const client = new AzureDevOpsClient(organization, project, pat);
 
       if (workItemId) {
         // Fetch details of a specific work item
         const workItem = await client.getWorkItemDetails(workItemId);
         if (!workItem) {
-          this._post(`❌ Work item with ID <b>${workItemId}</b> not found.`);
+          const errorMessage = `❌ Work item with ID <b>${workItemId}</b> not found.`;
+          this._post(errorMessage);
+          await this._logInteraction(email, `@view_tickets ${workItemId}`, errorMessage);
           return;
         }
 
         // Fetch history and format the work item
-        const history = await this._getWorkItemHistory(org,proj,workItemId);
+        const history = await this._getWorkItemHistory(organization, project, workItemId);
         const details = this._formatWorkItem(workItem, history);
-
         this._post(details);
+        await this._logInteraction(email, `@view_tickets ${workItemId}`, details);
       } else {
         // Fetch all assigned work items
         const items = await client.getAssignedWorkItems(email);
         if (items.length === 0) {
-          this._post('You have no open tickets.');
+          const message = 'You have no open tickets.';
+          this._post(message);
+          await this._logInteraction(email, '@view_tickets', message);
         } else {
           const list = items.map(w => {
-            const workItemUrl = `https://dev.azure.com/${org}/${proj}/_workitems/edit/${w.id}`;
+            const workItemUrl = `https://dev.azure.com/${organization}/${project}/_workitems/edit/${w.id}`;
             return `<li><a href="${workItemUrl}" target="_blank">#${w.id} — ${w.fields['System.Title']}</a></li>`;
           }).join('');
-          this._post(`<b>Your Tickets:</b><ul>${list}</ul>`);
+          const message = `<b>Your Tickets:</b><ul>${list}</ul>`;
+          this._post(message);
+          await this._logInteraction(email, '@view_tickets', message);
         }
       }
     } catch (e) {
-      this._post(`❌ Couldn't fetch tickets: ${e.message}`);
+      const errorMessage = `❌ Couldn't fetch tickets: ${e.message}`;
+      this._post(errorMessage);
+      await this._logInteraction(email, '@view_tickets', errorMessage);
     }
   }
 
@@ -492,6 +527,7 @@ class ChatViewProvider {
   }
 
   _post(html) {
+    this.lastBotMessage = html;
     this.view?.webview.postMessage({ command: 'receiveMessage', text: html });
   }
 
@@ -936,47 +972,58 @@ class ChatViewProvider {
 
   async _addCommentToWorkItem(workItemId, commentText, organization, project) {
     try {
-      const org = organization, proj = project, pat = process.env.AZURE_PAT;
-      const client = new AzureDevOpsClient(org, proj, pat);
-
       const email = await this._getEmail();
-
-      if(email === null) {
-        this._post(`❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`);
+      if (email === null) {
+        const errorMessage = `❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`;
+        this._post(errorMessage);
+        await this._logInteraction(email, `#${workItemId} @comment ${commentText}`, errorMessage);
         return;
       }
+
+      const pat = await this._getPatToken();
+      const client = new AzureDevOpsClient(organization, project, pat);
 
       // Add the comment to the work item
       const response = await client.addComment(workItemId, commentText);
       if (response) {
-        this._post(`✅ Comment added to work item <b>#${workItemId}</b>: "${commentText}"`);
+        const message = `✅ Comment added to work item <b>#${workItemId}</b>: "${commentText}"`;
+        this._post(message);
+        await this._logInteraction(email, `#${workItemId} @comment ${commentText}`, message);
       } else {
-        this._post(`❌ Failed to add comment to work item <b>#${workItemId}</b>.`);
+        const errorMessage = `❌ Failed to add comment to work item <b>#${workItemId}</b>.`;
+        this._post(errorMessage);
+        await this._logInteraction(email, `#${workItemId} @comment ${commentText}`, errorMessage);
       }
     } catch (error) {
-      console.error('Error adding comment to work item:', error);
-      this._post(`❌ An error occurred while adding the comment: ${error.message}`);
+      const errorMessage = `❌ An error occurred while adding the comment: ${error.message}`;
+      this._post(errorMessage);
+      await this._logInteraction(email, `#${workItemId} @comment ${commentText}`, errorMessage);
     }
   }
 
   async _updateTicket(workItemId, title, description, organization, project) {
     try {
-      const org = organization, proj = project, pat = await this._getPatToken();
-      if (!org || !proj || !pat) throw new Error('Missing ORG/AZURE_PROJECT/AZURE_PAT');
       const email = await this._getEmail();
-
-      if(email === null) {
-        this._post(`❌ Error: You are not authorized to update tickets in this project. Please check your Azure DevOps permissions.`);
+      if (email === null) {
+        const errorMessage = `❌ Error: You are not authorized to update tickets in this project. Please check your Azure DevOps permissions.`;
+        this._post(errorMessage);
+        await this._logInteraction(email, `#${workItemId} @update title "${title}" description "${description}"`, errorMessage);
         return;
       }
 
-      const client = new AzureDevOpsClient(org, proj, pat);
+      const pat = await this._getPatToken();
+      if (!pat) throw new Error('Missing AZURE_PAT');
+
+      const client = new AzureDevOpsClient(organization, project, pat);
       const structuredDesc = await this._structureDesc(description);
       await client.updateWorkItem(workItemId, title, structuredDesc);
-      this._post(`✅ Updated ticket <b>#${workItemId}</b> with new title and description.`);
+      const message = `✅ Updated ticket <b>#${workItemId}</b> with new title and description.`;
+      this._post(message);
+      await this._logInteraction(email, `#${workItemId} @update title "${title}" description "${description}"`, message);
     } catch (error) {
-      console.error('Error updating ticket:', error);
-      this._post(`❌ Error updating ticket: ${error.message}`);
+      const errorMessage = `❌ Error updating ticket: ${error.message}`;
+      this._post(errorMessage);
+      await this._logInteraction(email, `#${workItemId} @update title "${title}" description "${description}"`, errorMessage);
     }
   }
 
@@ -1259,39 +1306,49 @@ class ChatViewProvider {
 
   async _showBoardSummary(organization, project) {
     try {
+      const email = await this._getEmail();
       const pat = await this._getPatToken();
       const client = new AzureDevOpsClient(organization, project, pat);
       
       const workItems = await client.getBoardSummary();
       if (!workItems || workItems.length === 0) {
-        this._post('No work items found on the board.');
+        const message = 'No work items found on the board.';
+        this._post(message);
+        await this._logInteraction(email, '@board_summary', message);
         return;
       }
 
       const summary = this._generateOverallTicketSummary(workItems);
       this._post(summary);
+      await this._logInteraction(email, '@board_summary', summary);
     } catch (error) {
-      console.error('Error showing board summary:', error);
-      this._post(`❌ Error generating board summary: ${error.message}`);
+      const errorMessage = `❌ Error generating board summary: ${error.message}`;
+      this._post(errorMessage);
+      await this._logInteraction(email, '@board_summary', errorMessage);
     }
   }
 
   async _showSprintSummary(organization, project) {
     try {
+      const email = await this._getEmail();
       const pat = await this._getPatToken();
       const client = new AzureDevOpsClient(organization, project, pat);
       
       const workItems = await client.getBoardSummary();
       if (!workItems || workItems.length === 0) {
-        this._post('No work items found on the board.');
+        const message = 'No work items found on the board.';
+        this._post(message);
+        await this._logInteraction(email, '@sprint_summary', message);
         return;
       }
 
       const summary = this._generateSprintSummary(workItems);
       this._post(summary);
+      await this._logInteraction(email, '@sprint_summary', summary);
     } catch (error) {
-      console.error('Error showing sprint summary:', error);
-      this._post(`❌ Error generating sprint summary: ${error.message}`);
+      const errorMessage = `❌ Error generating sprint summary: ${error.message}`;
+      this._post(errorMessage);
+      await this._logInteraction(email, '@sprint_summary', errorMessage);
     }
   }
 
@@ -1385,6 +1442,29 @@ class ChatViewProvider {
     }
 
     return summary;
+  }
+
+  async _logInteraction(email, userInput, botOutput) {
+    try {
+      await initializeFetch();
+      const response = await fetch('http://localhost:8000/log', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: email,
+          user_input: userInput,
+          bot_output: botOutput
+        })
+      });
+
+      if (!response.ok) {
+        console.error('Failed to log interaction:', await response.text());
+      }
+    } catch (error) {
+      console.error('Error logging interaction:', error);
+    }
   }
 }
 module.exports = { activate, deactivate };

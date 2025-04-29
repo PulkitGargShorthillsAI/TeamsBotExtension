@@ -1,0 +1,44 @@
+2025-04-29 14:13:39 ikjot.singh@shorthills.ai 
+ hello 
+ I couldn't understand your request. Please try again.
+
+
+2025-04-29 14:13:46 ikjot.singh@shorthills.ai 
+ @view_tickets 
+ <b>Your Tickets:</b><ul><li><a href="https://dev.azure.com/ShorthillsPM/Databricks Project/_workitems/edit/1349" target="_blank">#1349 — create a ticket for my task - tested the vs code extension for edge cases</a></li><li><a href="https://dev.azure.com/ShorthillsPM/Databricks Project/_workitems/edit/1329" target="_blank">#1329 — Create vector store from music wikipedia pages</a></li><li><a href="https://dev.azure.com/ShorthillsPM/Databricks Project/_workitems/edit/1328" target="_blank">#1328 — Improved prompt of my RAG chatbot and tested it using 1000 inputs</a></li><li><a href="https://dev.azure.com/ShorthillsPM/Databricks Project/_workitems/edit/1327" target="_blank">#1327 — a ticket for my task -  made a chatbot using streamlit and gemini with RAG chain to answer music related queries</a></li><li><a href="https://dev.azure.com/ShorthillsPM/Databricks Project/_workitems/edit/1323" target="_blank">#1323 — Local Storage of Azure PAT Token and User Information</a></li><li><a href="https://dev.azure.com/ShorthillsPM/Databricks Project/_workitems/edit/1296" target="_blank">#1296 — published vs code extension</a></li><li><a href="https://dev.azure.com/ShorthillsPM/Databricks Project/_workitems/edit/1295" target="_blank">#1295 — sample ticket without desc</a></li><li><a href="https://dev.azure.com/ShorthillsPM/Databricks Project/_workitems/edit/1292" target="_blank">#1292 — setup postman</a></li><li><a href="https://dev.azure.com/ShorthillsPM/Databricks Project/_workitems/edit/1291" target="_blank">#1291 — setup github copilot</a></li><li><a href="https://dev.azure.com/ShorthillsPM/Databricks Project/_workitems/edit/1287" target="_blank">#1287 — setting up teams toolkit</a></li><li><a href="https://dev.azure.com/ShorthillsPM/Databricks Project/_workitems/edit/1285" target="_blank">#1285 — checking default settings</a></li><li><a href="https://dev.azure.com/ShorthillsPM/Databricks Project/_workitems/edit/1284" target="_blank">#1284 — Checking ticket for default settings</a></li><li><a href="https://dev.azure.com/ShorthillsPM/Databricks Project/_workitems/edit/1283" target="_blank">#1283 — Ticke to check default settings</a></li><li><a href="https://dev.azure.com/ShorthillsPM/Databricks Project/_workitems/edit/1282" target="_blank">#1282 — Adding Comments Directly from the Bot Implemented</a></li><li><a href="https://dev.azure.com/ShorthillsPM/Databricks Project/_workitems/edit/1267" target="_blank">#1267 — Improved Bot Responses</a></li><li><a href="https://dev.azure.com/ShorthillsPM/Databricks Project/_workitems/edit/1265" target="_blank">#1265 — Help Command, Handled Empty Description and Better Querying Implemented</a></li><li><a href="https://dev.azure.com/ShorthillsPM/Databricks Project/_workitems/edit/1263" target="_blank">#1263 — Viewing and Creating Tickets Implemented</a></li><li><a href="https://dev.azure.com/ShorthillsPM/Databricks Project/_workitems/edit/1259" target="_blank">#1259 — Assigned to Implemented using User Email</a></li><li><a href="https://dev.azure.com/ShorthillsPM/Databricks Project/_workitems/edit/1258" target="_blank">#1258 — Ticket Creation using Azure DevOps API Implemented</a></li></ul>
+
+
+2025-04-29 14:13:51 ikjot.singh@shorthills.ai 
+ @help 
+ 
+            <b>Here are the commands you can use:</b><br>
+            • <code>@create_ticket &lt;title&gt;</code> - Create a new ticket.<br>
+            • <code>@view_tickets</code> - View your open tickets.<br>
+            • <code>@view_tickets &lt;id&gt;</code> - View details of a specific ticket by ID.<br>
+            • <code>#&lt;id&gt; @comment &lt;comment text&gt;</code> - Add a comment to a specific ticket by ID.<br>
+            • <code>#&lt;id&gt; @update title "&lt;title&gt;" description "&lt;description&gt;"</code> - Update a ticket's title and description.<br>
+            • <code>@board_summary</code> - Show summary of all tickets on the board.<br>
+            • <code>@sprint_summary</code> - Show summary of tickets by sprint.<br>
+            • <code>@query_tickets &lt;query&gt;</code> - Query tickets by name or sprint (e.g., "show me all tickets of John" or "show me tickets in sprint 2").<br>
+            • <code>@help</code> - Get information about available commands.<br>
+            Feel free to ask me anything related to these commands!
+          
+
+
+2025-04-29 14:18:05 ikjot.singh@shorthills.ai 
+ help 
+ 
+            <b>Here are the commands you can use:</b><br>
+            • <code>@create_ticket &lt;title&gt;</code> - Create a new ticket.<br>
+            • <code>@view_tickets</code> - View your open tickets.<br>
+            • <code>@view_tickets &lt;id&gt;</code> - View details of a specific ticket by ID.<br>
+            • <code>#&lt;id&gt; @comment &lt;comment text&gt;</code> - Add a comment to a specific ticket by ID.<br>
+            • <code>#&lt;id&gt; @update title "&lt;title&gt;" description "&lt;description&gt;"</code> - Update a ticket's title and description.<br>
+            • <code>@board_summary</code> - Show summary of all tickets on the board.<br>
+            • <code>@sprint_summary</code> - Show summary of tickets by sprint.<br>
+            • <code>@query_tickets &lt;query&gt;</code> - Query tickets by name or sprint (e.g., "show me all tickets of John" or "show me tickets in sprint 2").<br>
+            • <code>@help</code> - Get information about available commands.<br>
+            Feel free to ask me anything related to these commands!
+          
+
+
