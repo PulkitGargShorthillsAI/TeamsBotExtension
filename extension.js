@@ -749,10 +749,10 @@ class ChatViewProvider {
           <button id="reset-pat-button">Reset PAT Token</button>
         </div>
         <div id="dropdown-container">
-          <select id="organization-dropdown" class="dropdown">
+          <select id="organization-dropdown">
             <option value="" disabled selected>Select Organization</option>
           </select>
-          <select id="project-dropdown" class="dropdown" disabled>
+          <select id="project-dropdown" disabled>
             <option value="" disabled selected>Select Project</option>
           </select>
         </div>
@@ -902,8 +902,14 @@ class ChatViewProvider {
         orgDropdown.addEventListener('change', () => {
           selectedOrganization = orgDropdown.options[orgDropdown.selectedIndex].textContent;
           saveState();
-          vscode.postMessage({ command: 'fetchProjects', organization: selectedOrganization });
-          messagesContainer.innerHTML = ''; // Clear messages when org changes
+          if (selectedOrganization) {
+            vscode.postMessage({ command: 'fetchProjects', organization: selectedOrganization });
+            projectDropdown.disabled = true; // Disable project dropdown when organization changes
+            projectDropdown.innerHTML = '<option value="" disabled selected>Select Project</option>'; // Reset project dropdown
+          } else {
+            projectDropdown.disabled = true;
+            projectDropdown.innerHTML = '<option value="" disabled selected>Select Project</option>';
+          }
         });
 
         projectDropdown.addEventListener('change', () => {
@@ -923,10 +929,10 @@ class ChatViewProvider {
           const text = messageInput.value.trim();
           if (!selectedOrganization || !selectedProject) {
             appendMessage('❌ Please select both an organization and a project before proceeding.', 'bot');
-            if(selectedOrganization === null) {
+            if(!selectedOrganization) {
               vscode.postMessage({command:'fetchOrganizations'});
             }
-            else{
+            else if(selectedOrganization && !selectedProject) {
               vscode.postMessage({command:'fetchProjects', organization: selectedOrganization });
             }
             return;
@@ -936,6 +942,7 @@ class ChatViewProvider {
             appendMessage(text, 'user');
             vscode.postMessage({ command: 'sendMessage', text, organization: selectedOrganization, project: selectedProject });
             messageInput.value = '';
+            messageInput.style.height = 'auto';
           }
         }
 
@@ -947,15 +954,10 @@ class ChatViewProvider {
 
           if (message.command === 'populateOrganizations') {
             populateDropdown(orgDropdown, message.organizations);
-            if (selectedOrganization) {
-              orgDropdown.value = selectedOrganization;
-              vscode.postMessage({ command: 'fetchProjects', organization: selectedOrganization });
-            }
           } else if (message.command === 'populateProjects') {
-            populateDropdown(projectDropdown, message.projects);
-            projectDropdown.disabled = false;
-            if (selectedProject) {
-              projectDropdown.value = selectedProject;
+            if (selectedOrganization) {
+              populateDropdown(projectDropdown, message.projects);
+              projectDropdown.disabled = false; // Enable project dropdown only when projects are populated and organization is selected
             }
           } else if (message.command === 'receiveMessage') {
             appendMessage(message.text, message.role || 'bot');
