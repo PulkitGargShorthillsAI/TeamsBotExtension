@@ -49,6 +49,57 @@ class ChatViewProvider {
     this.view = null;
     this.pendingTitle = null;
     this.lastBotMessage = '';
+    this.chatMemoryKey = 'teamsBot.chatHistory';
+    this.maxAgeHours = 48; // 2 days in hours
+  }
+
+  // Chat memory management methods
+  async _loadChatHistory() {
+    try {
+      // Request chat history from webview
+      this._postMessage({ command: 'getChatHistory' });
+      return []; // Return empty array as webview will handle the display
+    } catch (error) {
+      console.error('Error loading chat history:', error);
+      return [];
+    }
+  }
+
+  async _saveChatHistory(messages) {
+    try {
+      // Send messages to webview for storage
+      this._postMessage({ 
+        command: 'saveChatHistory',
+        messages: messages
+      });
+    } catch (error) {
+      console.error('Error saving chat history:', error);
+    }
+  }
+
+  async _addToChatHistory(role, text) {
+    try {
+      // Send new message to webview for storage
+      this._postMessage({ 
+        command: 'addToChatHistory',
+        message: {
+          timestamp: Date.now(),
+          role,
+          text
+        }
+      });
+    } catch (error) {
+      console.error('Error adding to chat history:', error);
+    }
+  }
+
+  async _displayChatHistory() {
+    try {
+      // Request chat history from webview
+      this._postMessage({ command: 'getChatHistory' });
+    } catch (error) {
+      console.error('Error displaying chat history:', error);
+    }
   }
 
   resolveWebviewView(webviewView) {
@@ -75,11 +126,19 @@ class ChatViewProvider {
           this._post('❌ Please select both an organization and a project before proceeding.');
           return;
         }
+        // Add user message to chat history
+        await this._addToChatHistory('user', text);
         this._onUserMessage(text.trim(), organization, project);
       }
     });
   }
 
+  _post(html) {
+    this.lastBotMessage = html;
+    // Add bot message to chat history
+    this._addToChatHistory('bot', html);
+    this.view?.webview.postMessage({ command: 'receiveMessage', text: html });
+  }
 
   resetUI() {
     // Clear the chat messages
@@ -525,11 +584,6 @@ class ChatViewProvider {
     }
   }
 
-  _post(html) {
-    this.lastBotMessage = html;
-    this.view?.webview.postMessage({ command: 'receiveMessage', text: html });
-  }
-
   _getHtml() {
     return `<!DOCTYPE html>
     <html lang="en">
@@ -583,6 +637,16 @@ class ChatViewProvider {
         color: var(--vscode-input-foreground);
         border-radius: 4px;
         font-size: 14px;
+        width: 200px;
+      }
+
+      select option {
+        color: var(--vscode-input-foreground);
+        background-color: var(--vscode-input-background);
+      }
+
+      select option:first-child {
+        color: var(--vscode-input-placeholderForeground);
       }
 
       #chat-container {
@@ -685,10 +749,10 @@ class ChatViewProvider {
           <button id="reset-pat-button">Reset PAT Token</button>
         </div>
         <div id="dropdown-container">
-          <select id="organization-dropdown">
+          <select id="organization-dropdown" class="dropdown">
             <option value="" disabled selected>Select Organization</option>
           </select>
-          <select id="project-dropdown" disabled>
+          <select id="project-dropdown" class="dropdown" disabled>
             <option value="" disabled selected>Select Project</option>
           </select>
         </div>
@@ -721,7 +785,81 @@ class ChatViewProvider {
         const chatContainer = document.getElementById('chat-container');
         let selectedOrganization = null;
         let selectedProject = null;
-        let isProcessing = false; // Add loading state
+        let isProcessing = false;
+
+        // Chat history management
+        const MAX_AGE_HOURS = 48;
+        let chatHistories = {}; // Object to store chat histories for each org-project combination
+
+        // Initialize state
+        const state = vscode.getState() || {};
+        if (state.selectedOrganization && state.selectedProject) {
+          selectedOrganization = state.selectedOrganization;
+          selectedProject = state.selectedProject;
+        }
+        if (state.chatHistories) {
+          chatHistories = state.chatHistories;
+        }
+
+        // Clear messages on initial load
+        messagesContainer.innerHTML = '';
+
+        function getCurrentChatKey() {
+          if (!selectedOrganization || !selectedProject) return null;
+          return selectedOrganization + ':' + selectedProject;
+        }
+
+        function getCurrentChatHistory() {
+          const key = getCurrentChatKey();
+          return key ? (chatHistories[key] || []) : [];
+        }
+
+        function pruneOldMessages(history) {
+          const now = Date.now();
+          const maxAgeMs = MAX_AGE_HOURS * 60 * 60 * 1000;
+          return history.filter(msg => (now - msg.timestamp) <= maxAgeMs);
+        }
+
+        function saveState() {
+          // Only save state if both org and project are selected
+          if (selectedOrganization && selectedProject) {
+            // Prune old messages from all histories
+            Object.keys(chatHistories).forEach(key => {
+              chatHistories[key] = pruneOldMessages(chatHistories[key]);
+            });
+
+            vscode.setState({
+              selectedOrganization,
+              selectedProject,
+              chatHistories
+            });
+          } else {
+            // Clear state if either org or project is missing
+            vscode.setState({
+              selectedOrganization: null,
+              selectedProject: null,
+              chatHistories
+            });
+          }
+        }
+
+        function displayCurrentChatHistory() {
+          messagesContainer.innerHTML = '';
+          
+          if (!selectedOrganization || !selectedProject) {
+            return; // Don't show any message if org/project not selected
+          }
+
+          const history = getCurrentChatHistory();
+          if (history.length === 0) {
+            return; // Don't show any message if there's no history
+          }
+
+          for (const msg of history) {
+            appendMessage(msg.text, msg.role);
+          }
+          scrollToBottom();
+        }
 
         // Function to set processing state
         function setProcessingState(processing) {
@@ -763,11 +901,15 @@ class ChatViewProvider {
 
         orgDropdown.addEventListener('change', () => {
           selectedOrganization = orgDropdown.options[orgDropdown.selectedIndex].textContent;
+          saveState();
           vscode.postMessage({ command: 'fetchProjects', organization: selectedOrganization });
+          messagesContainer.innerHTML = ''; // Clear messages when org changes
         });
 
         projectDropdown.addEventListener('change', () => {
           selectedProject = projectDropdown.options[projectDropdown.selectedIndex].textContent;
+          saveState();
+          displayCurrentChatHistory();
         });
 
         sendButton.addEventListener('click', sendMessage);
@@ -776,7 +918,7 @@ class ChatViewProvider {
         });
 
         function sendMessage() {
-          if (isProcessing) return; // Prevent sending if already processing
+          if (isProcessing) return;
 
           const text = messageInput.value.trim();
           if (!selectedOrganization || !selectedProject) {
@@ -790,7 +932,7 @@ class ChatViewProvider {
             return;
           }
           if (text) {
-            setProcessingState(true); // Set processing state to true
+            setProcessingState(true);
             appendMessage(text, 'user');
             vscode.postMessage({ command: 'sendMessage', text, organization: selectedOrganization, project: selectedProject });
             messageInput.value = '';
@@ -805,23 +947,53 @@ class ChatViewProvider {
 
           if (message.command === 'populateOrganizations') {
             populateDropdown(orgDropdown, message.organizations);
+            if (selectedOrganization) {
+              orgDropdown.value = selectedOrganization;
+              vscode.postMessage({ command: 'fetchProjects', organization: selectedOrganization });
+            }
           } else if (message.command === 'populateProjects') {
             populateDropdown(projectDropdown, message.projects);
             projectDropdown.disabled = false;
+            if (selectedProject) {
+              projectDropdown.value = selectedProject;
+            }
           } else if (message.command === 'receiveMessage') {
-            appendMessage(message.text, 'bot');
-            setProcessingState(false); // Reset processing state when response is received
+            appendMessage(message.text, message.role || 'bot');
+            setProcessingState(false);
           } else if (message.command === 'clearChat') {
             clearChat();
           } else if (message.command === 'clearDropdowns') {
             clearDropdowns();
+          } else if (message.command === 'addToChatHistory') {
+            const key = getCurrentChatKey();
+            if (key) {
+              if (!chatHistories[key]) {
+                chatHistories[key] = [];
+              }
+              chatHistories[key].push(message.message);
+              saveState();
+            }
+          } else if (message.command === 'saveChatHistory') {
+            const key = getCurrentChatKey();
+            if (key) {
+              chatHistories[key] = message.messages;
+              saveState();
+            }
+          } else if (message.command === 'getChatHistory') {
+            displayCurrentChatHistory();
           }
         });
 
         function clearChat() {
           messagesContainer.innerHTML = '';
           messageInput.value = '';
-          setProcessingState(false); // Reset processing state when chat is cleared
+          setProcessingState(false);
+          
+          const key = getCurrentChatKey();
+          if (key) {
+            chatHistories[key] = [];
+            saveState();
+          }
         }
 
         function clearDropdowns() {
@@ -830,6 +1002,8 @@ class ChatViewProvider {
           projectDropdown.disabled = true;
           selectedOrganization = null;
           selectedProject = null;
+          saveState();
+          messagesContainer.innerHTML = ''; // Clear messages without showing any message
         }
 
         function populateDropdown(dropdown, items) {
@@ -844,7 +1018,7 @@ class ChatViewProvider {
 
         quickActionButtons.forEach(button => {
           button.addEventListener('click', () => {
-            if (!isProcessing) { // Only allow quick actions if not processing
+            if (!isProcessing) {
               const text = button.getAttribute('data-text');
               messageInput.value = text;
               messageInput.focus();
