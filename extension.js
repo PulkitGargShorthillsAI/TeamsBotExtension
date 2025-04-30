@@ -62,7 +62,6 @@ class ChatViewProvider {
     webviewView.webview.onDidReceiveMessage(async msg => {
       if (msg.command === 'resetPatToken') {
         await this._resetPatToken();
-        this._postMessage({ command: 'clearDropdowns' });
       } else if (msg.command === 'fetchOrganizations') {
         const organizations = await this._getOrganizations();
         this._postMessage({ command: 'populateOrganizations', organizations });
@@ -1287,6 +1286,7 @@ class ChatViewProvider {
 
       // Clear dropdowns
       this._postMessage({ command: 'clearDropdowns' });
+      this._postMessage({ command: 'fetchOrganizations' });
 
       // Fetch and populate organizations immediately
       console.log('Fetching organizations with new PAT token...');
