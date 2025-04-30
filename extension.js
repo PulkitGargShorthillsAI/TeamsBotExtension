@@ -559,6 +559,14 @@ class ChatViewProvider {
         background-color: var(--vscode-editor-background);
       }
 
+      #header{
+        display: flex;
+        justify-content: space-between;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--vscode-input-border);
+        background-color: var(--vscode-editor-background);
+      }
+
       #dropdown-container {
         display: flex;
         padding: 10px;
@@ -619,6 +627,7 @@ class ChatViewProvider {
 
       #input-container {
         display: flex;
+        align-items: end;
         padding: 10px 12px;
         border-top: 1px solid var(--vscode-input-border);
         background-color: var(--vscode-editor-background);
@@ -661,6 +670,13 @@ class ChatViewProvider {
       button:hover {
         background-color: var(--vscode-button-hoverBackground);
       }
+
+
+      #submit-container {
+        display: flex;
+        align-items: center;
+        max-height: 30px;
+      }
     </style>
     </head>
     <body>
@@ -687,8 +703,10 @@ class ChatViewProvider {
       </div>
 
       <div id="input-container">
-        <input type="text" id="message-input" placeholder="Type a message..." />
-        <button id="send-button">Send</button>
+        <textarea id="message-input" placeholder="Type a message..." rows="1"></textarea>
+        <div id="submit-container">
+          <button id="send-button">Send</button>
+        </div>
       </div>
       
       <script>
