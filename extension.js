@@ -238,11 +238,14 @@ class ChatViewProvider {
             • <code>@board_summary</code> - Show summary of all tickets on the board.<br>
             • <code>@sprint_summary</code> - Show summary of tickets by sprint.<br>
             • <code>@query_tickets &lt;query&gt;</code> - Query tickets by name or sprint (e.g., "show me all tickets of John" or "show me tickets in sprint 2").<br>
+            • <code>@overdue_tickets</code> - Show tickets that are past their due date but still active or new.<br>
             • <code>@help</code> - Get information about available commands.<br>
             Feel free to ask me anything related to these commands!
           `;
           this._post(helpMessage);
           await this._logInteraction(email, text, helpMessage);
+        } else if (command === '@overdue_tickets') {
+          await this._showOverdueTickets(organization, project);
         } else if (command === '@view_tickets') {
           await this._showTickets(organization, project);
         } else if (command.startsWith('@view_tickets')) {
@@ -318,7 +321,7 @@ class ChatViewProvider {
       - @board_summary → Show summary of all tickets on the board.
       - @sprint_summary → Show summary of tickets by sprint.
       - @query_tickets <query> → Query tickets based on user name or sprint.
-
+      - @overdue_tickets → Show tickets that are past their due date but still active or new.
       Strict Rules:
       - If multiple commands are mentioned in a single message, split them into separate outputs in order.
       - Always output a JSON array of only command strings. No explanation or extra text.
@@ -506,13 +509,19 @@ class ChatViewProvider {
       const iterations = await client.getIterations();
       const currentIteration = iterations[0]; // Get the current iteration
 
+      // Set due date to 7 PM today
+      const today = new Date();
+      today.setHours(19, 0, 0, 0); // Set to 7 PM
+      const dueDate = today.toISOString();
+
       const patch = [
         { op: 'add', path: '/fields/System.Title', value: title },
         { op: 'add', path: '/fields/System.Description', value: htmlDesc },
         { op: 'add', path: '/fields/System.AssignedTo', value: email },
         { op: 'add', path: '/fields/Microsoft.VSTS.Scheduling.OriginalEstimate', value: process.env.DEFAULT_EFFORT || 4 },
         { op: 'add', path: '/fields/Microsoft.VSTS.Common.Priority', value: process.env.DEFAULT_PRIORITY || 1 },
-        { op: 'add', path: '/fields/Microsoft.VSTS.Common.Activity', value: process.env.DEFAULT_ACTIVITY || 'Development' }
+        { op: 'add', path: '/fields/Microsoft.VSTS.Common.Activity', value: process.env.DEFAULT_ACTIVITY || 'Development' },
+        { op: 'add', path: '/fields/Microsoft.VSTS.Scheduling.DueDate', value: dueDate }
       ];
 
       // Add iteration path if available
@@ -528,7 +537,7 @@ class ChatViewProvider {
       }
 
       const wi = await client.createWorkItem('Task', patch);
-      this._post(`✅ Created <b>#${wi.id}</b> "${title}"<br>${htmlDesc}`);
+      this._post(`✅ Created <b>#${wi.id}</b> "${title}"<br>${htmlDesc}<br>Due date set to today at 7 PM.`);
     } catch (e) {
       this._post(`❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`);
     }
@@ -1718,6 +1727,85 @@ class ChatViewProvider {
       }
     } catch (error) {
       console.error('Error logging interaction:', error);
+    }
+  }
+
+  async _showOverdueTickets(organization, project) {
+    try {
+      const email = await this._getEmail();
+      const pat = await this._getPatToken();
+      const client = new AzureDevOpsClient(organization, project, pat);
+      
+      const workItems = await client.getOverdueTickets();
+      if (!workItems || workItems.length === 0) {
+        const message = 'No overdue tickets found.';
+        this._post(message);
+        await this._logInteraction(email, '@overdue_tickets', message);
+        return;
+      }
+
+      // Group tickets by assignee first, then by state
+      const ticketsByAssignee = workItems.reduce((acc, ticket) => {
+        const assignee = ticket.fields['System.AssignedTo']?.displayName || 'Unassigned';
+        const state = ticket.fields['System.State'] || 'Unknown';
+        
+        if (!acc[assignee]) {
+          acc[assignee] = {
+            Active: [],
+            New: []
+          };
+        }
+        
+        if (state === 'Active') {
+          acc[assignee].Active.push(ticket);
+        } else if (state === 'New') {
+          acc[assignee].New.push(ticket);
+        }
+        
+        return acc;
+      }, {});
+
+      let message = '<b>📅 Overdue Tickets</b><br><br>';
+
+      // Display tickets grouped by assignee and state
+      for (const [assignee, states] of Object.entries(ticketsByAssignee)) {
+        message += `<b>${assignee}</b><br>`;
+        
+        // Active tickets
+        message += 'Active<br>';
+        if (states.Active.length > 0) {
+          const activeList = states.Active.map(w => {
+            const workItemUrl = `https://dev.azure.com/${organization}/${project}/_workitems/edit/${w.id}`;
+            const dueDate = new Date(w.fields['Microsoft.VSTS.Scheduling.DueDate']).toLocaleString();
+            return `<li><b>#${w.id}</b> — <a href="${workItemUrl}" target="_blank">${w.fields['System.Title']}</a> (Due: ${dueDate})</li>`;
+          }).join('');
+          message += `<ul>${activeList}</ul>`;
+        } else {
+          message += 'No overdue tickets<br>';
+        }
+
+        // New tickets
+        message += 'New<br>';
+        if (states.New.length > 0) {
+          const newList = states.New.map(w => {
+            const workItemUrl = `https://dev.azure.com/${organization}/${project}/_workitems/edit/${w.id}`;
+            const dueDate = new Date(w.fields['Microsoft.VSTS.Scheduling.DueDate']).toLocaleString();
+            return `<li><b>#${w.id}</b> — <a href="${workItemUrl}" target="_blank">${w.fields['System.Title']}</a> (Due: ${dueDate})</li>`;
+          }).join('');
+          message += `<ul>${newList}</ul>`;
+        } else {
+          message += 'No overdue tickets<br>';
+        }
+
+        message += '<br><br><br>';
+      }
+
+      this._post(message);
+      await this._logInteraction(email, '@overdue_tickets', message);
+    } catch (error) {
+      const errorMessage = `❌ Error fetching overdue tickets: ${error.message}`;
+      this._post(errorMessage);
+      await this._logInteraction(email, '@overdue_tickets', errorMessage);
     }
   }
 }
