@@ -551,11 +551,46 @@ class ChatViewProvider {
           this._post(message);
           await this._logInteraction(email, '@view_tickets', message);
         } else {
-          const list = items.map(w => {
-            const workItemUrl = `https://dev.azure.com/${organization}/${project}/_workitems/edit/${w.id}`;
-            return `<li><a href="${workItemUrl}" target="_blank">#${w.id} — ${w.fields['System.Title']}</a></li>`;
-          }).join('');
-          const message = `<b>Your Tickets:</b><ul>${list}</ul>`;
+          // Group tickets by state
+          const ticketsByState = items.reduce((acc, ticket) => {
+            const state = ticket.fields['System.State'] || 'Unassigned';
+            if (!acc[state]) {
+              acc[state] = [];
+            }
+            acc[state].push(ticket);
+            return acc;
+          }, {});
+
+          // Create HTML for each state group
+          let message = '<b>Your Tickets:</b><br><br>';
+          
+          // Define the order of states to display
+          const stateOrder = ['Active', 'Doing', 'New', 'Unassigned', 'Closed', 'Resolved', 'Removed', 'Completed'];
+          
+          // Add each state group in the defined order
+          stateOrder.forEach(state => {
+            if (ticketsByState[state] && ticketsByState[state].length > 0) {
+              message += `<b>${state}</b><br>`;
+              const list = ticketsByState[state].map(w => {
+                const workItemUrl = `https://dev.azure.com/${organization}/${project}/_workitems/edit/${w.id}`;
+                return `<li> <b>#${w.id}</b> — <a href="${workItemUrl}" target="_blank"> ${w.fields['System.Title']}</a></li>`;
+              }).join('');
+              message += `<ul>${list}</ul><br>`;
+            }
+          });
+
+          // Add any remaining states that weren't in the predefined order
+          Object.keys(ticketsByState).forEach(state => {
+            if (!stateOrder.includes(state) && ticketsByState[state].length > 0) {
+              message += `<b>${state}</b><br>`;
+              const list = ticketsByState[state].map(w => {
+                const workItemUrl = `https://dev.azure.com/${organization}/${project}/_workitems/edit/${w.id}`;
+                return `<li> <b>#${w.id}</b> — <a href="${workItemUrl}" target="_blank"> ${w.fields['System.Title']}</a></li>`;
+              }).join('');
+              message += `<ul>${list}</ul><br>`;
+            }
+          });
+
           this._post(message);
           await this._logInteraction(email, '@view_tickets', message);
         }

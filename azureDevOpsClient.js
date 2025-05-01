@@ -55,7 +55,6 @@ class AzureDevOpsClient {
         SELECT [System.Id]
         FROM workitems
         WHERE [System.AssignedTo] = '${assignedToEmail}'
-          AND [System.State] <> 'Closed'
         ORDER BY [System.Id] DESC
       `
     };
