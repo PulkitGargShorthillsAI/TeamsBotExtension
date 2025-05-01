@@ -35,6 +35,12 @@ function activate(context) {
         if (!session) {
           // User signed out, reset the UI
           provider.resetUI();
+        } else {
+          // User signed in, fetch organizations
+          const organizations = await provider._getOrganizations();
+          if (organizations && organizations.length > 0) {
+            provider._postMessage({ command: 'populateOrganizations', organizations });
+          }
         }
       }
     })
@@ -131,6 +137,19 @@ class ChatViewProvider {
         this._onUserMessage(text.trim(), organization, project);
       }
     });
+
+    // Check if user is already signed in and fetch organizations
+    this._checkAndFetchOrganizations();
+  }
+
+  async _checkAndFetchOrganizations() {
+    const session = await vscode.authentication.getSession('microsoft', ['email'], { createIfNone: false });
+    if (session) {
+      const organizations = await this._getOrganizations();
+      if (organizations && organizations.length > 0) {
+        this._postMessage({ command: 'populateOrganizations', organizations });
+      }
+    }
   }
 
   _post(html) {
