@@ -83,13 +83,13 @@ class ChatViewProvider {
     }
   }
 
-  async _addToChatHistory(role, text) {
+  async _addToChatHistory(role, text, timestamp = Date.now()) {
     try {
       // Send new message to webview for storage
       this._postMessage({ 
         command: 'addToChatHistory',
         message: {
-          timestamp: Date.now(),
+          timestamp,
           role,
           text
         }
@@ -154,9 +154,9 @@ class ChatViewProvider {
 
   _post(html) {
     this.lastBotMessage = html;
-    // Add bot message to chat history
-    this._addToChatHistory('bot', html);
-    this.view?.webview.postMessage({ command: 'receiveMessage', text: html });
+    // Add bot message to chat history with current timestamp
+    this._addToChatHistory('bot', html, Date.now());
+    this.view?.webview.postMessage({ command: 'receiveMessage', text: html, role: 'bot', timestamp: Date.now() });
   }
 
   resetUI() {
@@ -317,9 +317,9 @@ class ChatViewProvider {
       - @help → Provide help information.
       - @view_tickets → View all assigned tickets.
       - @view_tickets <id> → View a specific ticket by ID.
-      - @create_ticket <title> description "<description>" → Create a new ticket.
+      - @create_ticket <title> description '<description>' → Create a new ticket.
       - #<id> @comment <comment text> → Add a comment to a ticket.
-      - #<id> @update title "<title>" description "<description>" → Update a ticket.
+      - #<id> @update title '<title>' description '<description>' → Update a ticket.
       - @board_summary → Show summary of all tickets on the board.
       - @sprint_summary → Show summary of tickets by sprint.
       - @overdue_tickets → Show tickets that are past their due date but still active or new.
@@ -547,10 +547,11 @@ class ChatViewProvider {
       const iterations = await client.getIterations();
       const currentIteration = iterations[0]; // Get the current iteration
 
-      // Set due date to 7 PM today
-      const today = new Date();
-      today.setHours(19, 0, 0, 0); // Set to 7 PM
-      const dueDate = today.toISOString();
+      // Set due date to 12:30 AM of next day
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1); // Set to tomorrow
+      tomorrow.setHours(0, 30, 0, 0); // Set to 12:30 AM
+      const dueDate = tomorrow.toISOString();
 
       const patch = [
         { op: 'add', path: '/fields/System.Title', value: title },
@@ -787,6 +788,9 @@ class ChatViewProvider {
       }
 
       .message {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
         padding: 10px 14px;
         border-radius: 16px;
         max-width: 75%;
@@ -886,12 +890,6 @@ class ChatViewProvider {
 
       .date-separator::after {
         right: 0;
-      }
-
-      .message {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
       }
 
       .message-content {
@@ -1014,6 +1012,40 @@ class ChatViewProvider {
           }
         }
 
+        function formatTimestamp(timestamp) {
+          try {
+            const date = new Date(timestamp);
+            if (isNaN(date.getTime())) {
+              return new Date().toLocaleTimeString();
+            }
+            return date.toLocaleTimeString();
+          } catch (error) {
+            return new Date().toLocaleTimeString();
+          }
+        }
+
+        function appendMessage(text, sender, timestamp) {
+          const messageElement = document.createElement('div');
+          messageElement.classList.add('message', sender === 'user' ? 'user-message' : 'bot-message');
+          
+          // Create message content container
+          const messageContent = document.createElement('div');
+          messageContent.classList.add('message-content');
+          messageContent.innerHTML = text;
+          
+          // Create timestamp element
+          const timeElement = document.createElement('div');
+          timeElement.classList.add('message-timestamp');
+          timeElement.textContent = formatTimestamp(timestamp);
+          
+          // Add both elements to message
+          messageElement.appendChild(messageContent);
+          messageElement.appendChild(timeElement);
+          
+          messagesContainer.appendChild(messageElement);
+          scrollToBottom();
+        }
+
         function displayCurrentChatHistory() {
           messagesContainer.innerHTML = '';
           
@@ -1040,7 +1072,7 @@ class ChatViewProvider {
               messagesContainer.appendChild(dateSeparator);
             }
 
-            appendMessage(msg.text, msg.role, messageDate.toLocaleTimeString());
+            appendMessage(msg.text, msg.role, msg.timestamp);
           }
           scrollToBottom();
         }
@@ -1068,28 +1100,6 @@ class ChatViewProvider {
         // Auto-scroll to bottom when new messages are added
         function scrollToBottom() {
           chatContainer.scrollTop = chatContainer.scrollHeight;
-        }
-
-        function appendMessage(text, sender, timestamp) {
-          const messageElement = document.createElement('div');
-          messageElement.classList.add('message', sender === 'user' ? 'user-message' : 'bot-message');
-          
-          // Create message content container
-          const messageContent = document.createElement('div');
-          messageContent.classList.add('message-content');
-          messageContent.innerHTML = text;
-          
-          // Create timestamp element
-          const timeElement = document.createElement('div');
-          timeElement.classList.add('message-timestamp');
-          timeElement.textContent = timestamp;
-          
-          // Add both elements to message
-          messageElement.appendChild(messageContent);
-          messageElement.appendChild(timeElement);
-          
-          messagesContainer.appendChild(messageElement);
-          scrollToBottom();
         }
 
         resetPatButton.addEventListener('click', () => {
@@ -1126,7 +1136,7 @@ class ChatViewProvider {
 
           const text = messageInput.value.trim();
           if (!selectedOrganization || !selectedProject) {
-            appendMessage('❌ Please select both an organization and a project before proceeding.', 'bot', '');
+            appendMessage('❌ Please select both an organization and a project before proceeding.', 'bot', Date.now());
             if(!selectedOrganization) {
               vscode.postMessage({command:'fetchOrganizations'});
             }
@@ -1137,7 +1147,7 @@ class ChatViewProvider {
           }
           if (text) {
             setProcessingState(true);
-            appendMessage(text, 'user', '');
+            appendMessage(text, 'user', Date.now());
             vscode.postMessage({ command: 'sendMessage', text, organization: selectedOrganization, project: selectedProject });
             messageInput.value = '';
             messageInput.style.height = 'auto';
@@ -1158,7 +1168,7 @@ class ChatViewProvider {
               projectDropdown.disabled = false; // Enable project dropdown only when projects are populated and organization is selected
             }
           } else if (message.command === 'receiveMessage') {
-            appendMessage(message.text, message.role || 'bot', '');
+            appendMessage(message.text, message.role || 'bot', message.timestamp || Date.now());
             setProcessingState(false);
           } else if (message.command === 'clearChat') {
             clearChat();
@@ -1951,8 +1961,10 @@ class ChatViewProvider {
         if (states.Active.length > 0) {
           const activeList = states.Active.map(w => {
             const workItemUrl = `https://dev.azure.com/${organization}/${project}/_workitems/edit/${w.id}`;
-            const dueDate = new Date(w.fields['Microsoft.VSTS.Scheduling.DueDate']).toLocaleString();
-            return `<li><b>#${w.id}</b> — <a href="${workItemUrl}" target="_blank">${w.fields['System.Title']}</a> (Due: ${dueDate})</li>`;
+            const dueDate = new Date(w.fields['Microsoft.VSTS.Scheduling.DueDate']);
+            // Subtract 5.5 hours from the due date
+            dueDate.setHours(dueDate.getHours() - 5, dueDate.getMinutes() - 30);
+            return `<li><b>#${w.id}</b> — <a href="${workItemUrl}" target="_blank">${w.fields['System.Title']}</a> (Due: ${dueDate.toLocaleString()})</li>`;
           }).join('');
           message += `<ul>${activeList}</ul>`;
         } else {
@@ -1964,8 +1976,10 @@ class ChatViewProvider {
         if (states.New.length > 0) {
           const newList = states.New.map(w => {
             const workItemUrl = `https://dev.azure.com/${organization}/${project}/_workitems/edit/${w.id}`;
-            const dueDate = new Date(w.fields['Microsoft.VSTS.Scheduling.DueDate']).toLocaleString();
-            return `<li><b>#${w.id}</b> — <a href="${workItemUrl}" target="_blank">${w.fields['System.Title']}</a> (Due: ${dueDate})</li>`;
+            const dueDate = new Date(w.fields['Microsoft.VSTS.Scheduling.DueDate']);
+            // Subtract 5.5 hours from the due date
+            dueDate.setHours(dueDate.getHours() - 5, dueDate.getMinutes() - 30);
+            return `<li><b>#${w.id}</b> — <a href="${workItemUrl}" target="_blank">${w.fields['System.Title']}</a> (Due: ${dueDate.toLocaleString()})</li>`;
           }).join('');
           message += `<ul>${newList}</ul>`;
         } else {
