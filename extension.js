@@ -370,6 +370,22 @@ class ChatViewProvider {
       User: "Show 1345"
       Output: ["@view_tickets 1345"]
 
+      User: "Create a ticket, I built a chatbot using Gemini and Pinecone, tested it fully."
+      Output: ["@create_ticket Chatbot Development Using Gemini and Pinecone description \'Developed a chatbot leveraging Gemini LLM and Pinecone as a vector store. Completed unit testing to ensure functionality.\'"]
+
+      User: "Update ticket 1348, stored PAT token locally instead of MySQL"
+      Output: ["#1348 @update title \'Store PAT Token Locally\' description \'Implemented functionality to securely store the PAT token locally within the VS Code extension, removing dependency on a remote MySQL server.\'"]
+
+      User: "Comment on ticket 1234 that this needs urgent attention and then show it to me"
+      Output: ["#1234 @comment this needs urgent attention", "@view_tickets 1234"]
+
+      User: "Create a ticket for migrating database to MongoDB and show me my tickets"
+      Output: ["@create_ticket Database Migration to MongoDB description \"Migrated existing database infrastructure to MongoDB to enhance scalability and flexibility.\"", "@view_tickets"]
+
+      User: "Add a comment to ticket 5678 saying this issue is critical"
+      Output: ["#5678 @comment this issue is critical"]
+
+
       User message:
       "${userMessage}"
 
@@ -384,7 +400,6 @@ class ChatViewProvider {
       console.log('Full Gemini Response:', JSON.stringify(response, null, 2));
       
       const result = response.response;
-      console.log('Response Result:', JSON.stringify(result, null, 2));
       
       // Get token counts from the usageMetadata
       const inputTokens = result.usageMetadata?.promptTokenCount || 0;
@@ -496,7 +511,7 @@ class ChatViewProvider {
 
 			Generate a response in formatted HTML (without wrapping it in \`\`\`html or any code block fences). Use the following structure:
 
-			<b>Aim:</b><br>
+			<b>Aim:</b>
 			(a short, one-line summary of the task)
 
 			<br><br><b>Acceptance Criteria:</b><br>
@@ -673,10 +688,7 @@ class ChatViewProvider {
   async _chatReply(msg) {
     const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
     const response = await model.generateContent(msg);
-    console.log('Chat Reply Response:', JSON.stringify(response, null, 2));
-    
     const result = response.response;
-    console.log('Chat Reply Result:', JSON.stringify(result, null, 2));
     
     // Get token counts from the usageMetadata
     const inputTokens = result.usageMetadata?.promptTokenCount || 0;
