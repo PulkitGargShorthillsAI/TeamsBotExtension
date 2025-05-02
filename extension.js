@@ -811,6 +811,57 @@ class ChatViewProvider {
         align-items: center;
         max-height: 30px;
       }
+
+      .date-separator {
+        text-align: center;
+        margin: 16px 0;
+        color: var(--vscode-descriptionForeground);
+        font-size: 12px;
+        position: relative;
+      }
+
+      .date-separator::before,
+      .date-separator::after {
+        content: '';
+        position: absolute;
+        top: 50%;
+        width: 30%;
+        height: 1px;
+        background-color: var(--vscode-input-border);
+      }
+
+      .date-separator::before {
+        left: 0;
+      }
+
+      .date-separator::after {
+        right: 0;
+      }
+
+      .message {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .message-content {
+        flex: 1;
+      }
+
+      .message-timestamp {
+        font-size: 11px;
+        color: var(--vscode-descriptionForeground);
+        opacity: 0.8;
+        align-self: flex-end;
+      }
+
+      .user-message .message-timestamp {
+        text-align: right;
+      }
+
+      .bot-message .message-timestamp {
+        text-align: left;
+      }
     </style>
     </head>
     <body>
@@ -925,8 +976,21 @@ class ChatViewProvider {
             return; // Don't show any message if there's no history
           }
 
+          let currentDate = null;
           for (const msg of history) {
-            appendMessage(msg.text, msg.role);
+            const messageDate = new Date(msg.timestamp);
+            const messageDateStr = messageDate.toLocaleDateString();
+            
+            // Add date separator if date changes
+            if (currentDate !== messageDateStr) {
+              currentDate = messageDateStr;
+              const dateSeparator = document.createElement('div');
+              dateSeparator.classList.add('date-separator');
+              dateSeparator.textContent = messageDateStr;
+              messagesContainer.appendChild(dateSeparator);
+            }
+
+            appendMessage(msg.text, msg.role, messageDate.toLocaleTimeString());
           }
           scrollToBottom();
         }
@@ -956,10 +1020,24 @@ class ChatViewProvider {
           chatContainer.scrollTop = chatContainer.scrollHeight;
         }
 
-        function appendMessage(text, sender) {
+        function appendMessage(text, sender, timestamp) {
           const messageElement = document.createElement('div');
           messageElement.classList.add('message', sender === 'user' ? 'user-message' : 'bot-message');
-          messageElement.innerHTML = text;
+          
+          // Create message content container
+          const messageContent = document.createElement('div');
+          messageContent.classList.add('message-content');
+          messageContent.innerHTML = text;
+          
+          // Create timestamp element
+          const timeElement = document.createElement('div');
+          timeElement.classList.add('message-timestamp');
+          timeElement.textContent = timestamp;
+          
+          // Add both elements to message
+          messageElement.appendChild(messageContent);
+          messageElement.appendChild(timeElement);
+          
           messagesContainer.appendChild(messageElement);
           scrollToBottom();
         }
@@ -998,7 +1076,7 @@ class ChatViewProvider {
 
           const text = messageInput.value.trim();
           if (!selectedOrganization || !selectedProject) {
-            appendMessage('❌ Please select both an organization and a project before proceeding.', 'bot');
+            appendMessage('❌ Please select both an organization and a project before proceeding.', 'bot', '');
             if(!selectedOrganization) {
               vscode.postMessage({command:'fetchOrganizations'});
             }
@@ -1009,7 +1087,7 @@ class ChatViewProvider {
           }
           if (text) {
             setProcessingState(true);
-            appendMessage(text, 'user');
+            appendMessage(text, 'user', '');
             vscode.postMessage({ command: 'sendMessage', text, organization: selectedOrganization, project: selectedProject });
             messageInput.value = '';
             messageInput.style.height = 'auto';
@@ -1030,7 +1108,7 @@ class ChatViewProvider {
               projectDropdown.disabled = false; // Enable project dropdown only when projects are populated and organization is selected
             }
           } else if (message.command === 'receiveMessage') {
-            appendMessage(message.text, message.role || 'bot');
+            appendMessage(message.text, message.role || 'bot', '');
             setProcessingState(false);
           } else if (message.command === 'clearChat') {
             clearChat();
