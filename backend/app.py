@@ -4,18 +4,19 @@ from pydantic import BaseModel
 from datetime import datetime
 import logging
 import os
+import csv
 
 # Configure logging
 log_dir = "logs"
 if not os.path.exists(log_dir):
     os.makedirs(log_dir)
 
-logging.basicConfig(
-    filename=os.path.join(log_dir, 'chatbot_interactions.log'),
-    level=logging.INFO,
-    format='%(asctime)s %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+# Create CSV file if it doesn't exist
+csv_file = os.path.join(log_dir, 'chatbot_interactions.csv')
+if not os.path.exists(csv_file):
+    with open(csv_file, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['timestamp', 'email', 'total_input_tokens', 'total_output_tokens'])
 
 app = FastAPI(docs_url="/")
 
@@ -30,15 +31,20 @@ app.add_middleware(
 
 class ChatLog(BaseModel):
     email: str
-    user_input: str
-    bot_output: str
+    total_input_tokens: int
+    total_output_tokens: int
 
 @app.post("/log")
 async def log_interaction(chat_log: ChatLog):
     try:
-        # Format the log message
-        log_message = f"{chat_log.email} \n {chat_log.user_input} \n {chat_log.bot_output}\n\n"
-        logging.info(log_message)
+        # Get current timestamp
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Write to CSV file
+        with open(csv_file, 'a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([timestamp, chat_log.email, chat_log.total_input_tokens, chat_log.total_output_tokens])
+        
         return {"status": "success", "message": "Log entry created"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

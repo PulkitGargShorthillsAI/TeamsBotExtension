@@ -381,9 +381,24 @@ class ChatViewProvider {
       `;
 
       const response = await model.generateContent(prompt);
-      console.log(response.response.text());
+      console.log('Full Gemini Response:', JSON.stringify(response, null, 2));
+      
+      const result = response.response;
+      console.log('Response Result:', JSON.stringify(result, null, 2));
+      
+      // Get token counts from the usageMetadata
+      const inputTokens = result.usageMetadata?.promptTokenCount || 0;
+      const outputTokens = result.usageMetadata?.candidatesTokenCount || 0;
 
-      const commands = JSON.parse(this._removeJsonWrapper(response.response.text().trim()));
+      console.log('Token Counts:', { inputTokens, outputTokens });
+
+      // Store token counts for logging
+      this.lastInteractionTokens = {
+        input: inputTokens,
+        output: outputTokens
+      };
+
+      const commands = JSON.parse(this._removeJsonWrapper(result.candidates[0].content.parts[0].text));
       return commands;
     } catch (error) {
       console.error('Error fetching commands from GEMINI:', error);
@@ -495,8 +510,25 @@ class ChatViewProvider {
 			</ul>
 		`;
 
-    const res = await (await model.generateContent(prompt)).response;
-    return res.text().trim();
+    const response = await model.generateContent(prompt);
+    console.log('Structure Desc Response:', JSON.stringify(response, null, 2));
+    
+    const result = response.response;
+    console.log('Structure Desc Result:', JSON.stringify(result, null, 2));
+    
+    // Get token counts from the usageMetadata
+    const inputTokens = result.usageMetadata?.promptTokenCount || 0;
+    const outputTokens = result.usageMetadata?.candidatesTokenCount || 0;
+
+    console.log('Structure Desc Token Counts:', { inputTokens, outputTokens });
+
+    // Store token counts for logging
+    this.lastInteractionTokens = {
+      input: inputTokens,
+      output: outputTokens
+    };
+
+    return result.candidates[0].content.parts[0].text;
   }
 
   async _makeTicket(title, htmlDesc, organization, project) {
@@ -639,7 +671,25 @@ class ChatViewProvider {
 
   async _chatReply(msg) {
     const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-    return (await (await model.generateContent(msg)).response).text().trim();
+    const response = await model.generateContent(msg);
+    console.log('Chat Reply Response:', JSON.stringify(response, null, 2));
+    
+    const result = response.response;
+    console.log('Chat Reply Result:', JSON.stringify(result, null, 2));
+    
+    // Get token counts from the usageMetadata
+    const inputTokens = result.usageMetadata?.promptTokenCount || 0;
+    const outputTokens = result.usageMetadata?.candidatesTokenCount || 0;
+
+    console.log('Chat Reply Token Counts:', { inputTokens, outputTokens });
+
+    // Store token counts for logging
+    this.lastInteractionTokens = {
+      input: inputTokens,
+      output: outputTokens
+    };
+
+    return result.candidates[0].content.parts[0].text;
   }
 
   async _getEmail() {
@@ -1795,6 +1845,13 @@ class ChatViewProvider {
         return;
       }
 
+      // Use the stored token counts from the last Gemini interaction
+      const inputTokens = this.lastInteractionTokens?.input || 0;
+      const outputTokens = this.lastInteractionTokens?.output || 0;
+
+      console.log('Last Interaction Tokens:', this.lastInteractionTokens);
+      console.log('Logging tokens:', { inputTokens, outputTokens });
+
       const response = await fetch(logUrl, {
         method: 'POST',
         headers: {
@@ -1802,14 +1859,17 @@ class ChatViewProvider {
         },
         body: JSON.stringify({
           email: email,
-          user_input: userInput,
-          bot_output: botOutput
+          total_input_tokens: inputTokens,
+          total_output_tokens: outputTokens
         })
       });
 
       if (!response.ok) {
         console.error('Failed to log interaction:', await response.text());
       }
+
+      // Reset the token counts after logging
+      this.lastInteractionTokens = null;
     } catch (error) {
       console.error('Error logging interaction:', error);
     }
