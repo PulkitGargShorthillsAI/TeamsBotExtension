@@ -244,8 +244,10 @@ class ChatViewProvider {
           `;
           this._post(helpMessage);
           await this._logInteraction(email, text, helpMessage);
-        } else if (command === '@overdue_tickets') {
-          await this._showOverdueTickets(organization, project);
+        } else if (command.startsWith('@overdue_tickets')) {
+          const assignee = await this._parseOverdueTicketsCommand(text);
+          console.log(assignee);
+          await this._showOverdueTickets(organization, project, assignee);
         } else if (command === '@view_tickets') {
           await this._showTickets(organization, project);
         } else if (command.startsWith('@view_tickets')) {
@@ -320,19 +322,38 @@ class ChatViewProvider {
       - #<id> @update title "<title>" description "<description>" → Update a ticket.
       - @board_summary → Show summary of all tickets on the board.
       - @sprint_summary → Show summary of tickets by sprint.
-      - @query_tickets <query> → Query tickets based on user name or sprint.
       - @overdue_tickets → Show tickets that are past their due date but still active or new.
+      - @overdue_tickets of <name> → Show overdue tickets for a specific person.
+      - @overdue_tickets my → Show your own overdue tickets.
+      - @query_tickets <query> → Query tickets based on name or sprint (for non-overdue tickets).
+      - @help → Get information about available commands.
+
       Strict Rules:
       - If multiple commands are mentioned in a single message, split them into separate outputs in order.
       - Always output a JSON array of only command strings. No explanation or extra text.
+      - For overdue tickets:
+        - Use @overdue_tickets for general overdue ticket queries
+        - Use @overdue_tickets of <name> when specifically asking about someone's overdue tickets
+        - Use @overdue_tickets my when asking about own overdue tickets
+      - For regular ticket queries (non-overdue):
+        - Use @query_tickets for general ticket queries about assignments or sprints
+        - Do NOT use @query_tickets for overdue ticket queries
       - If the user gives a casual or layman description for creating or updating a ticket:
         - Create a short, professional, formal title summarizing the task.
         - Write a clear, well-phrased formal description based on the user's input.
         - Avoid copying informal or casual language directly.
       - If details are missing, make reasonable formal assumptions based on the context.
-      - For ticket queries, convert natural language into @query_tickets command with the exact query text.
 
       Examples:
+
+      User: "Show me all overdue tickets"
+      Output: ["@overdue_tickets"]
+
+      User: "Show me Pulkit's overdue tickets"
+      Output: ["@overdue_tickets of Pulkit"]
+
+      User: "Show my overdue tickets"
+      Output: ["@overdue_tickets my"]
 
       User: "Show me all tickets of John"
       Output: ["@query_tickets show me all tickets of John"]
@@ -348,21 +369,6 @@ class ChatViewProvider {
 
       User: "Show 1345"
       Output: ["@view_tickets 1345"]
-
-      User: "Create a ticket, I built a chatbot using Gemini and Pinecone, tested it fully."
-      Output: ["@create_ticket Chatbot Development Using Gemini and Pinecone description \'Developed a chatbot leveraging Gemini LLM and Pinecone as a vector store. Completed unit testing to ensure functionality.\'"]
-
-      User: "Update ticket 1348, stored PAT token locally instead of MySQL"
-      Output: ["#1348 @update title \'Store PAT Token Locally\' description \'Implemented functionality to securely store the PAT token locally within the VS Code extension, removing dependency on a remote MySQL server.\'"]
-
-      User: "Comment on ticket 1234 that this needs urgent attention and then show it to me"
-      Output: ["#1234 @comment this needs urgent attention", "@view_tickets 1234"]
-
-      User: "Create a ticket for migrating database to MongoDB and show me my tickets"
-      Output: ["@create_ticket Database Migration to MongoDB description \"Migrated existing database infrastructure to MongoDB to enhance scalability and flexibility.\"", "@view_tickets"]
-
-      User: "Add a comment to ticket 5678 saying this issue is critical"
-      Output: ["#5678 @comment this issue is critical"]
 
       User message:
       "${userMessage}"
@@ -1730,7 +1736,7 @@ class ChatViewProvider {
     }
   }
 
-  async _showOverdueTickets(organization, project) {
+  async _showOverdueTickets(organization, project, assignee = null) {
     try {
       const email = await this._getEmail();
       const pat = await this._getPatToken();
@@ -1744,8 +1750,25 @@ class ChatViewProvider {
         return;
       }
 
+      // Filter work items if assignee is specified
+      let filteredWorkItems = workItems;
+      if (assignee) {
+        filteredWorkItems = workItems.filter(ticket => {
+          const assignedTo = ticket.fields['System.AssignedTo']?.displayName || 'Unassigned';
+          // Check if the assignee matches either full name or first name
+          return assignedTo.toLowerCase().includes(assignee.toLowerCase());
+        });
+      }
+
+      if (filteredWorkItems.length === 0) {
+        const message = assignee ? `No overdue tickets found for ${assignee}.` : 'No overdue tickets found.';
+        this._post(message);
+        await this._logInteraction(email, '@overdue_tickets', message);
+        return;
+      }
+
       // Group tickets by assignee first, then by state
-      const ticketsByAssignee = workItems.reduce((acc, ticket) => {
+      const ticketsByAssignee = filteredWorkItems.reduce((acc, ticket) => {
         const assignee = ticket.fields['System.AssignedTo']?.displayName || 'Unassigned';
         const state = ticket.fields['System.State'] || 'Unknown';
         
@@ -1766,7 +1789,7 @@ class ChatViewProvider {
       }, {});
 
       let message = '<b>📅 Overdue Tickets</b><br><br>';
-
+      
       // Display tickets grouped by assignee and state
       for (const [assignee, states] of Object.entries(ticketsByAssignee)) {
         message += `<b>${assignee}</b><br>`;
@@ -1807,6 +1830,31 @@ class ChatViewProvider {
       this._post(errorMessage);
       await this._logInteraction(email, '@overdue_tickets', errorMessage);
     }
+  }
+
+  async _parseOverdueTicketsCommand(text) {
+    const email = await this._getEmail();
+    if (!email) return null;
+
+    // Extract name from email
+    const nameParts = email.split('@')[0].split('.');
+    const firstName = nameParts[0];
+    const lastName = nameParts.length > 1 ? nameParts[1] : '';
+    const fullName = lastName ? `${firstName} ${lastName}` : firstName;
+
+    // Check for "my overdue tickets"
+    if (text.toLowerCase().includes('my overdue tickets')) {
+      return fullName;
+    }
+
+    // Check for specific person's overdue tickets
+    const match = text.match(/overdue tickets of\s+([^"]+)/i);
+    if (match) {
+      return match[1].trim();
+    }
+
+    // Default case: show all overdue tickets
+    return null;
   }
 }
 module.exports = { activate, deactivate };
