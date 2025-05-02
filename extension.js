@@ -565,6 +565,7 @@ class ChatViewProvider {
       if (workItemId) {
         // Fetch details of a specific work item
         const workItem = await client.getWorkItemDetails(workItemId);
+        console.log(workItem);
         if (!workItem) {
           const errorMessage = `❌ Work item with ID <b>${workItemId}</b> not found.`;
           this._post(errorMessage);
@@ -1750,10 +1751,23 @@ class ChatViewProvider {
         return;
       }
 
+      // Filter out tickets with missing or invalid due dates
+      const validWorkItems = workItems.filter(ticket => {
+        const dueDate = ticket.fields['Microsoft.VSTS.Scheduling.DueDate'];
+        return dueDate && !isNaN(new Date(dueDate).getTime());
+      });
+
+      if (validWorkItems.length === 0) {
+        const message = 'No overdue tickets with valid due dates found.';
+        this._post(message);
+        await this._logInteraction(email, '@overdue_tickets', message);
+        return;
+      }
+
       // Filter work items if assignee is specified
-      let filteredWorkItems = workItems;
+      let filteredWorkItems = validWorkItems;
       if (assignee) {
-        filteredWorkItems = workItems.filter(ticket => {
+        filteredWorkItems = validWorkItems.filter(ticket => {
           const assignedTo = ticket.fields['System.AssignedTo']?.displayName || 'Unassigned';
           // Check if the assignee matches either full name or first name
           return assignedTo.toLowerCase().includes(assignee.toLowerCase());
