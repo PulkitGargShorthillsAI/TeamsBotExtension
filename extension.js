@@ -4,6 +4,9 @@ const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const AzureDevOpsClient = require('./azureDevOpsClient');
+const { exec } = require('child_process');
+const util = require('util');
+const execAsync = util.promisify(exec);
 
 let fetch; // Will be dynamically imported
 
@@ -211,7 +214,10 @@ class ChatViewProvider {
       }
   
       for (const command of commands) {
-        if (command.startsWith('@create_ticket')) {
+        if (command === '@create_ticket_from_last_commit') {
+          await this._createTicketFromLastCommit(organization, project, email, text);
+        }
+        else if (command.startsWith('@create_ticket')) {
           const match = command.match(/^@create_ticket\s+(.+?)(?:\s+description\s+'(.+)')?$/i);
           if (match) {
             const title = match[1].trim();
@@ -227,7 +233,8 @@ class ChatViewProvider {
               await this._logInteraction(email, text, message);
             }
           }
-        } else if (command === '@help') {
+        }
+        else if (command === '@help') {
           const helpMessage = `
             <b>Here are the commands you can use:</b><br>
             • <code>@create_ticket &lt;title&gt;</code> - Create a new ticket.<br>
@@ -318,6 +325,7 @@ class ChatViewProvider {
       - @view_tickets → View all assigned tickets.
       - @view_tickets <id> → View a specific ticket by ID.
       - @create_ticket <title> description '<description>' → Create a new ticket.
+      - @create_ticket_from_last_commit → Create a ticket based on the last git commit in the workspace.
       - #<id> @comment <comment text> → Add a comment to a ticket.
       - #<id> @update title '<title>' description '<description>' → Update a ticket.
       - @board_summary → Show summary of all tickets on the board.
@@ -371,10 +379,10 @@ class ChatViewProvider {
       Output: ["@view_tickets 1345"]
 
       User: "Create a ticket, I built a chatbot using Gemini and Pinecone, tested it fully."
-      Output: ["@create_ticket Chatbot Development Using Gemini and Pinecone description \'Developed a chatbot leveraging Gemini LLM and Pinecone as a vector store. Completed unit testing to ensure functionality.\'"]
+      Output: ["@create_ticket Chatbot Development Using Gemini and Pinecone description 'Developed a chatbot leveraging Gemini LLM and Pinecone as a vector store. Completed unit testing to ensure functionality.'"]
 
       User: "Update ticket 1348, stored PAT token locally instead of MySQL"
-      Output: ["#1348 @update title \'Store PAT Token Locally\' description \'Implemented functionality to securely store the PAT token locally within the VS Code extension, removing dependency on a remote MySQL server.\'"]
+      Output: ["#1348 @update title 'Store PAT Token Locally' description 'Implemented functionality to securely store the PAT token locally within the VS Code extension, removing dependency on a remote MySQL server.'"]
 
       User: "Comment on ticket 1234 that this needs urgent attention and then show it to me"
       Output: ["#1234 @comment this needs urgent attention", "@view_tickets 1234"]
@@ -385,6 +393,8 @@ class ChatViewProvider {
       User: "Add a comment to ticket 5678 saying this issue is critical"
       Output: ["#5678 @comment this issue is critical"]
 
+      User: "Create a ticket from my last commit"
+      Output: ["@create_ticket_from_last_commit"]
 
       User message:
       "${userMessage}"
@@ -2033,6 +2043,110 @@ class ChatViewProvider {
 
     // Default case: show all overdue tickets
     return null;
+  }
+
+  async _createTicketFromLastCommit(organization, project, email, userText) {
+    try {
+      // 1. Get the current workspace folder
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      if (!workspaceFolders || workspaceFolders.length === 0) {
+        throw new Error('No workspace folder found. Please open a workspace first.');
+      }
+
+      // 2. Find the git repository root
+      let gitRoot;
+      try {
+        const { stdout } = await execAsync('git rev-parse --show-toplevel', { 
+          cwd: workspaceFolders[0].uri.fsPath 
+        });
+        gitRoot = stdout.trim();
+      } catch (error) {
+        if (error.message.includes('not a git repository')) {
+          throw new Error('This workspace is not a git repository. Please initialize git first.');
+        }
+        throw error;
+      }
+
+      // 3. Get last commit message and detailed changes
+      try {
+        // Get commit message
+        const { stdout: commitMsg } = await execAsync('git log -1 --pretty=%B', { cwd: gitRoot });
+        
+        // Get detailed changes for each file
+        const { stdout: fileChanges } = await execAsync('git show --name-status', { cwd: gitRoot });
+        
+        // Get detailed diff for each file
+        const { stdout: detailedDiff } = await execAsync('git show -p', { cwd: gitRoot });
+        
+        if (!commitMsg || !fileChanges || !detailedDiff) {
+          throw new Error('No commit information found. Make sure you have at least one commit in your repository.');
+        }
+
+        const commitSummary = `
+          Commit Message:
+          ${commitMsg}
+
+          Files Changed:
+          ${fileChanges}
+
+          Detailed Changes:
+          ${detailedDiff}
+        `;
+
+        console.log(fileChanges);
+        console.log(detailedDiff);
+        
+        
+
+        // 4. Use Gemini to generate title/description
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+        const prompt = `
+          You are an assistant that writes Azure DevOps ticket titles and descriptions from git commit info.
+
+          Given this commit info:
+          ${commitSummary}
+
+          Generate:
+          1. A short, formal title summarizing the main change.
+          2. A clear, professional description that:
+             - Summarizes what was changed and why
+             - Lists the files that were modified
+             - Explains the key changes in each file
+             - Highlights any important technical details or considerations
+
+          Output as JSON:
+          {
+            "title": "<title>",
+            "description": "<description>"
+          }
+        `;
+        const response = await model.generateContent(prompt);
+        const result = response.response;
+        const json = JSON.parse(this._removeJsonWrapper(result.candidates[0].content.parts[0].text));
+        const title = json.title;
+        const description = json.description;
+
+        // 5. Structure the description
+        const structuredDesc = await this._structureDesc(description);
+
+        // 6. Create the ticket
+        await this._makeTicket(title, structuredDesc, organization, project);
+
+        // 7. Log interaction
+        await this._logInteraction(email, userText, `Created ticket from last commit: ${title}`);
+        this._post(`✅ Created ticket from last commit: "${title}"`);
+      } catch (gitError) {
+        if (gitError.message.includes('No commit information found')) {
+          throw new Error('No commits found in this repository. Please make at least one commit first.');
+        } else {
+          throw new Error(`Git error: ${gitError.message}`);
+        }
+      }
+    } catch (error) {
+      const errorMessage = `❌ Error creating ticket from last commit: ${error.message}`;
+      this._post(errorMessage);
+      await this._logInteraction(email, userText, errorMessage);
+    }
   }
 }
 module.exports = { activate, deactivate };
