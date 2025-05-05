@@ -217,6 +217,17 @@ class ChatViewProvider {
         if (command === '@create_ticket_from_last_commit') {
           await this._createTicketFromLastCommit(organization, project, email, text);
         }
+        else if (command.startsWith('@create_ticket_from_commit')) {
+          const match = command.match(/^@create_ticket_from_commit\s+([a-f0-9]+)$/i);
+          if (match) {
+            const commitId = match[1].trim();
+            await this._createTicketFromLastCommit(organization, project, email, text, commitId);
+          } else {
+            const errorMessage = "❌ Invalid commit ID format. Please provide a valid commit hash.";
+            this._post(errorMessage);
+            await this._logInteraction(email, text, errorMessage);
+          }
+        }
         else if (command.startsWith('@create_ticket')) {
           const match = command.match(/^@create_ticket\s+(.+?)(?:\s+description\s+'(.+)')?$/i);
           if (match) {
@@ -326,6 +337,7 @@ class ChatViewProvider {
       - @view_tickets <id> → View a specific ticket by ID.
       - @create_ticket <title> description '<description>' → Create a new ticket.
       - @create_ticket_from_last_commit → Create a ticket based on the last git commit in the workspace.
+      - @create_ticket_from_commit <commit_id> → Create a ticket based on a specific git commit ID.
       - #<id> @comment <comment text> → Add a comment to a ticket.
       - #<id> @update title '<title>' description '<description>' → Update a ticket.
       - @board_summary → Show summary of all tickets on the board.
@@ -395,6 +407,9 @@ class ChatViewProvider {
 
       User: "Create a ticket from my last commit"
       Output: ["@create_ticket_from_last_commit"]
+
+      User: "Create a ticket from commit abc123"
+      Output: ["@create_ticket_from_commit abc123"]
 
       User message:
       "${userMessage}"
@@ -2045,7 +2060,7 @@ class ChatViewProvider {
     return null;
   }
 
-  async _createTicketFromLastCommit(organization, project, email, userText) {
+  async _createTicketFromLastCommit(organization, project, email, userText, commitId = null) {
     try {
       // 1. Get the current workspace folder
       const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -2067,16 +2082,19 @@ class ChatViewProvider {
         throw error;
       }
 
-      // 3. Get last commit message and detailed changes
+      // 3. Get commit message and detailed changes
       try {
-        // Get commit message
-        const { stdout: commitMsg } = await execAsync('git log -1 --pretty=%B', { cwd: gitRoot });
+        // Get commit message - use specific commit ID if provided, otherwise get last commit
+        const commitCommand = commitId ? `git log ${commitId} -1 --pretty=%B` : 'git log -1 --pretty=%B';
+        const { stdout: commitMsg } = await execAsync(commitCommand, { cwd: gitRoot });
         
         // Get detailed changes for each file
-        const { stdout: fileChanges } = await execAsync('git show --name-status', { cwd: gitRoot });
+        const showCommand = commitId ? `git show ${commitId} --name-status` : 'git show --name-status';
+        const { stdout: fileChanges } = await execAsync(showCommand, { cwd: gitRoot });
         
         // Get detailed diff for each file
-        const { stdout: detailedDiff } = await execAsync('git show -p', { cwd: gitRoot });
+        const diffCommand = commitId ? `git show ${commitId} -p` : 'git show -p';
+        const { stdout: detailedDiff } = await execAsync(diffCommand, { cwd: gitRoot });
         
         if (!commitMsg || !fileChanges || !detailedDiff) {
           throw new Error('No commit information found. Make sure you have at least one commit in your repository.');
@@ -2096,8 +2114,6 @@ class ChatViewProvider {
         console.log(fileChanges);
         console.log(detailedDiff);
         
-        
-
         // 4. Use Gemini to generate title/description
         const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
         const prompt = `
@@ -2133,17 +2149,20 @@ class ChatViewProvider {
         await this._makeTicket(title, structuredDesc, organization, project);
 
         // 7. Log interaction
-        await this._logInteraction(email, userText, `Created ticket from last commit: ${title}`);
-        this._post(`✅ Created ticket from last commit: "${title}"`);
+        const commitRef = commitId ? `commit ${commitId}` : 'last commit';
+        await this._logInteraction(email, userText, `Created ticket from ${commitRef}: ${title}`);
+        this._post(`✅ Created ticket from ${commitRef}: "${title}"`);
       } catch (gitError) {
         if (gitError.message.includes('No commit information found')) {
           throw new Error('No commits found in this repository. Please make at least one commit first.');
+        } else if (gitError.message.includes('unknown revision')) {
+          throw new Error(`Commit ID "${commitId}" not found. Please provide a valid commit ID.`);
         } else {
           throw new Error(`Git error: ${gitError.message}`);
         }
       }
     } catch (error) {
-      const errorMessage = `❌ Error creating ticket from last commit: ${error.message}`;
+      const errorMessage = `❌ Error creating ticket from commit: ${error.message}`;
       this._post(errorMessage);
       await this._logInteraction(email, userText, errorMessage);
     }
