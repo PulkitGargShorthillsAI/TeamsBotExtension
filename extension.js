@@ -189,11 +189,12 @@ class ChatViewProvider {
   
 
   async _onUserMessage(text, organization, project) {
+    let email = null;
     try {
-      const email = await this._getEmail();
+      email = await this._getEmail();
       if (!email) {
         this._post('❌ Please log in with an authorized email to use the chatbot.');
-        await this._logInteraction(email, text, '❌ Please log in with an authorized email to use the chatbot.');
+        await this._logInteraction('unknown', text, '❌ Please log in with an authorized email to use the chatbot.');
         return;
       }
 
@@ -262,10 +263,10 @@ class ChatViewProvider {
           `;
           this._post(helpMessage);
           await this._logInteraction(email, text, helpMessage);
-        } else if (command.startsWith('@overdue_tickets')) {
-          const assignee = await this._parseOverdueTicketsCommand(text);
-          console.log(assignee);
-          await this._showOverdueTickets(organization, project, assignee);
+        }
+        else if (command.startsWith('@overdue_tickets')) {
+          const params = await this._parseOverdueTicketsCommand(command);
+          await this._showOverdueTickets(organization, project, params);
         } else if (command === '@view_tickets') {
           await this._showTickets(organization, project);
         } else if (command.startsWith('@view_tickets')) {
@@ -310,7 +311,7 @@ class ChatViewProvider {
       console.error('Error handling user message:', error);
       const errorMessage = `❌ An error occurred: ${error.message}`;
       this._post(errorMessage);
-      await this._logInteraction(email, text, errorMessage);
+      await this._logInteraction(email || 'unknown', text, errorMessage);
     }
   }
 
@@ -345,6 +346,8 @@ class ChatViewProvider {
       - @overdue_tickets → Show tickets that are past their due date but still active or new.
       - @overdue_tickets of <name> → Show overdue tickets for a specific person.
       - @overdue_tickets my → Show your own overdue tickets.
+      - @overdue_tickets as of <date> → Show overdue tickets as of a specific date (e.g., "1st May" or "20 Jan" or "3 May 2024").
+      - @overdue_tickets of <name> as of <date> → Show overdue tickets for a specific person as of a specific date.
       - @query_tickets <query> → Query tickets based on name or sprint (for non-overdue tickets).
       - @help → Get information about available commands.
 
@@ -355,6 +358,15 @@ class ChatViewProvider {
         - Use @overdue_tickets for general overdue ticket queries
         - Use @overdue_tickets of <name> when specifically asking about someone's overdue tickets
         - Use @overdue_tickets my when asking about own overdue tickets
+        - Use @overdue_tickets as of <date> for date-based queries
+        - Use @overdue_tickets of <name> as of <date> for combined person and date queries
+        - CRITICAL: For date-based queries:
+          - ALWAYS include the exact date from the user's message
+          - NEVER use today's date unless the user explicitly says "today"
+          - Preserve the exact date format (e.g., "3rd May", "1st Jan", "20th March")
+          - If the user says "as of 3rd May", use exactly that date, not today
+          - If the user says "as of today", use today's date
+        - The date in the output must match exactly what the user specified
       - For regular ticket queries (non-overdue):
         - Use @query_tickets for general ticket queries about assignments or sprints
         - Do NOT use @query_tickets for overdue ticket queries
@@ -363,6 +375,7 @@ class ChatViewProvider {
         - Write a clear, well-phrased formal description based on the user's input.
         - Avoid copying informal or casual language directly.
       - If details are missing, make reasonable formal assumptions based on the context.
+      -If you are not confident that the message matches one of the defined commands, return an empty JSON array. Do not guess or hallucinate commands.
 
       Examples:
 
@@ -374,6 +387,24 @@ class ChatViewProvider {
 
       User: "Show my overdue tickets"
       Output: ["@overdue_tickets my"]
+
+      User: "Show overdue tickets as of 1st May"
+      Output: ["@overdue_tickets as of 1st May"]
+
+      User: "Show overdue tickets as of 20 Jan"
+      Output: ["@overdue_tickets as of 20 Jan"]
+
+      User: "Show overdue tickets as of 3rd May 2024"
+      Output: ["@overdue_tickets as of 3rd May 2024"]
+
+      User: "Show overdue tickets as of today"
+      Output: ["@overdue_tickets as of today"]
+
+      User: "Show Pulkit's overdue tickets as of 3rd May"
+      Output: ["@overdue_tickets of Pulkit as of 3rd May"]
+
+      User: "Show my overdue tickets as of 20th Jan"
+      Output: ["@overdue_tickets my as of 20th Jan"]
 
       User: "Show me all tickets of John"
       Output: ["@query_tickets show me all tickets of John"]
@@ -411,6 +442,19 @@ class ChatViewProvider {
       User: "Create a ticket from commit abc123"
       Output: ["@create_ticket_from_commit abc123"]
 
+      User: "what is a monkey"
+      Output: []
+
+      User: "sbdjnreoi"
+      Output: []
+
+      User: "pizza toppings"
+      Output: []
+      
+      User: "how are you?"
+      Output: []
+
+
       User message:
       "${userMessage}"
 
@@ -418,6 +462,11 @@ class ChatViewProvider {
       - Parse the message following the above rules.
       - If the message implies multiple commands, output all commands separately in sequence.
       - Always generate a formal title and description if user message is casual.
+      - For date-based queries:
+        - ALWAYS preserve the exact date from the user's message
+        - NEVER use today's date unless explicitly mentioned
+        - Keep ordinal numbers (1st, 2nd, 3rd, etc.) in the date
+        - The date in the output must match exactly what the user specified
       - Output only a clean JSON array of valid commands.
       `;
 
@@ -1922,17 +1971,28 @@ class ChatViewProvider {
     }
   }
 
-  async _showOverdueTickets(organization, project, assignee = null) {
+  async _showOverdueTickets(organization, project, params = {}) {
+    let email = null;
     try {
-      const email = await this._getEmail();
+      email = await this._getEmail();
       const pat = await this._getPatToken();
       const client = new AzureDevOpsClient(organization, project, pat);
       
-      const workItems = await client.getOverdueTickets();
+      // Handle error from command parsing
+      if (params.error) {
+        this._post(`❌ ${params.error}`);
+        await this._logInteraction(email || 'unknown', '@overdue_tickets', params.error);
+        return;
+      }
+
+      console.log('Params for overdue tickets:', params);
+      const workItems = await client.getOverdueTickets(params.date);
       if (!workItems || workItems.length === 0) {
-        const message = 'No overdue tickets found.';
+        const message = params.date 
+          ? `No overdue tickets found as of ${params.date.toLocaleDateString()}.`
+          : 'No overdue tickets found.';
         this._post(message);
-        await this._logInteraction(email, '@overdue_tickets', message);
+        await this._logInteraction(email || 'unknown', '@overdue_tickets', message);
         return;
       }
 
@@ -1943,26 +2003,34 @@ class ChatViewProvider {
       });
 
       if (validWorkItems.length === 0) {
-        const message = 'No overdue tickets with valid due dates found.';
+        const message = params.date
+          ? `No overdue tickets with valid due dates found as of ${params.date.toLocaleDateString()}.`
+          : 'No overdue tickets with valid due dates found.';
         this._post(message);
-        await this._logInteraction(email, '@overdue_tickets', message);
+        await this._logInteraction(email || 'unknown', '@overdue_tickets', message);
         return;
       }
 
       // Filter work items if assignee is specified
       let filteredWorkItems = validWorkItems;
-      if (assignee) {
+      if (params.assignee) {
         filteredWorkItems = validWorkItems.filter(ticket => {
           const assignedTo = ticket.fields['System.AssignedTo']?.displayName || 'Unassigned';
           // Check if the assignee matches either full name or first name
-          return assignedTo.toLowerCase().includes(assignee.toLowerCase());
+          return assignedTo.toLowerCase().includes(params.assignee.toLowerCase());
         });
       }
 
       if (filteredWorkItems.length === 0) {
-        const message = assignee ? `No overdue tickets found for ${assignee}.` : 'No overdue tickets found.';
+        const message = params.assignee
+          ? params.date
+            ? `No overdue tickets found for ${params.assignee} as of ${params.date.toLocaleDateString()}.`
+            : `No overdue tickets found for ${params.assignee}.`
+          : params.date
+            ? `No overdue tickets found as of ${params.date.toLocaleDateString()}.`
+            : 'No overdue tickets found.';
         this._post(message);
-        await this._logInteraction(email, '@overdue_tickets', message);
+        await this._logInteraction(email || 'unknown', '@overdue_tickets', message);
         return;
       }
 
@@ -1987,7 +2055,11 @@ class ChatViewProvider {
         return acc;
       }, {});
 
-      let message = '<b>📅 Overdue Tickets</b><br><br>';
+      let message = '<b>📅 Overdue Tickets</b>';
+      if (params.date) {
+        message += ` (as of ${params.date.toLocaleDateString()})`;
+      }
+      message += '<br><br>';
       
       // Display tickets grouped by assignee and state
       for (const [assignee, states] of Object.entries(ticketsByAssignee)) {
@@ -2027,11 +2099,11 @@ class ChatViewProvider {
       }
 
       this._post(message);
-      await this._logInteraction(email, '@overdue_tickets', message);
+      await this._logInteraction(email || 'unknown', '@overdue_tickets', message);
     } catch (error) {
       const errorMessage = `❌ Error fetching overdue tickets: ${error.message}`;
       this._post(errorMessage);
-      await this._logInteraction(email, '@overdue_tickets', errorMessage);
+      await this._logInteraction(email || 'unknown', '@overdue_tickets', errorMessage);
     }
   }
 
@@ -2045,19 +2117,74 @@ class ChatViewProvider {
     const lastName = nameParts.length > 1 ? nameParts[1] : '';
     const fullName = lastName ? `${firstName} ${lastName}` : firstName;
 
-    // Check for "my overdue tickets"
-    if (text.toLowerCase().includes('my overdue tickets')) {
-      return fullName;
+    // Check for "my overdue tickets" with date
+    const myTicketsDateMatch = text.match(/@overdue_tickets\s+my\s+as of\s+(\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)[a-z]*\s*(?:\d{4})?)/i);
+    if (myTicketsDateMatch) {
+      const dateStr = myTicketsDateMatch[1].trim();
+      // If no year is specified, use current year
+      const currentYear = new Date().getFullYear();
+      const dateWithYear = dateStr.match(/\d{4}$/) ? dateStr : `${dateStr} ${currentYear}`;
+      
+      // Remove ordinal indicators (st, nd, rd, th)
+      const cleanDateStr = dateWithYear.replace(/(\d+)(st|nd|rd|th)/, '$1');
+      
+      const date = new Date(cleanDateStr);
+      if (isNaN(date.getTime())) {
+        return { error: 'Invalid date format. Please use format like "1st May" or "20 Jan" or "3 May 2024"' };
+      }
+      return { assignee: fullName, date };
+    }
+
+    // Check for "my overdue tickets" without date
+    if (text.match(/@overdue_tickets\s+my/i)) {
+      return { assignee: fullName };
+    }
+
+    // Check for both assignee and date first (this needs to be checked before individual patterns)
+    const assigneeDateMatch = text.match(/@overdue_tickets\s+of\s+([^"]+)\s+as of\s+(\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)[a-z]*\s*(?:\d{4})?)/i);
+    if (assigneeDateMatch) {
+      const assignee = assigneeDateMatch[1].trim();
+      const dateStr = assigneeDateMatch[2].trim();
+      // If no year is specified, use current year
+      const currentYear = new Date().getFullYear();
+      const dateWithYear = dateStr.match(/\d{4}$/) ? dateStr : `${dateStr} ${currentYear}`;
+      
+      // Remove ordinal indicators (st, nd, rd, th)
+      const cleanDateStr = dateWithYear.replace(/(\d+)(st|nd|rd|th)/, '$1');
+      
+      const date = new Date(cleanDateStr);
+      if (isNaN(date.getTime())) {
+        return { error: 'Invalid date format. Please use format like "1st May" or "20 Jan" or "3 May 2024"' };
+      }
+      return { assignee, date };
     }
 
     // Check for specific person's overdue tickets
-    const match = text.match(/overdue tickets of\s+([^"]+)/i);
-    if (match) {
-      return match[1].trim();
+    const assigneeMatch = text.match(/@overdue_tickets\s+of\s+([^"]+)/i);
+    if (assigneeMatch) {
+      return { assignee: assigneeMatch[1].trim() };
+    }
+
+    // Check for date-based queries
+    const dateMatch = text.match(/@overdue_tickets\s+as of\s+(\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)[a-z]*\s*(?:\d{4})?)/i);
+    if (dateMatch) {
+      const dateStr = dateMatch[1].trim();
+      // If no year is specified, use current year
+      const currentYear = new Date().getFullYear();
+      const dateWithYear = dateStr.match(/\d{4}$/) ? dateStr : `${dateStr} ${currentYear}`;
+      
+      // Remove ordinal indicators (st, nd, rd, th)
+      const cleanDateStr = dateWithYear.replace(/(\d+)(st|nd|rd|th)/, '$1');
+      
+      const date = new Date(cleanDateStr);
+      if (isNaN(date.getTime())) {
+        return { error: 'Invalid date format. Please use format like "1st May" or "20 Jan" or "3 May 2024"' };
+      }
+      return { date };
     }
 
     // Default case: show all overdue tickets
-    return null;
+    return {};
   }
 
   async _createTicketFromLastCommit(organization, project, email, userText, commitId = null) {

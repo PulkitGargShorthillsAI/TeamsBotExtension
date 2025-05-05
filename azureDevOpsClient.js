@@ -258,9 +258,21 @@ class AzureDevOpsClient {
     return currentIteration ? [currentIteration] : [];
   }
 
-  async getOverdueTickets() {
+  async getOverdueTickets(asOfDate = null) {
     await this._loadFetch();
     const wiqlUrl = `${this.baseUrl}/wit/wiql?api-version=${this.apiVersion}`;
+    
+    // Format the date for WIQL query
+    let dateCondition = '';
+    if (asOfDate) {
+      // Format date to YYYY-MM-DD format for WIQL
+      const formattedDate = asOfDate.toISOString().split('T')[0];
+      dateCondition = `AND [Microsoft.VSTS.Scheduling.DueDate] <= '${formattedDate}'`;
+      console.log('Using date condition:', dateCondition);
+    } else {
+      dateCondition = `AND [Microsoft.VSTS.Scheduling.DueDate] < @Today`;
+      console.log('Using today condition');
+    }
     
     const wiqlQuery = {
       query: `
@@ -268,10 +280,12 @@ class AzureDevOpsClient {
         FROM WorkItems
         WHERE [System.TeamProject] = @project
         AND [System.State] IN ('Active', 'New')
-        AND [Microsoft.VSTS.Scheduling.DueDate] < @Today
+        ${dateCondition}
         ORDER BY [Microsoft.VSTS.Scheduling.DueDate] ASC
       `
     };
+
+    console.log('WIQL Query:', wiqlQuery.query);
 
     const response = await fetch(wiqlUrl, {
       method: 'POST',
@@ -283,7 +297,9 @@ class AzureDevOpsClient {
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch overdue tickets: ${response.status}`);
+      const errorText = await response.text();
+      console.error('WIQL Query Error:', errorText);
+      throw new Error(`Failed to fetch overdue tickets: ${response.status} - ${errorText}`);
     }
 
     const data = await response.json();
@@ -307,7 +323,9 @@ class AzureDevOpsClient {
       });
 
       if (!batchResponse.ok) {
-        throw new Error(`Failed to fetch work item batch: ${batchResponse.status}`);
+        const errorText = await batchResponse.text();
+        console.error('Batch Fetch Error:', errorText);
+        throw new Error(`Failed to fetch work item batch: ${batchResponse.status} - ${errorText}`);
       }
 
       const batchData = await batchResponse.json();
