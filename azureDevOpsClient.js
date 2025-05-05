@@ -334,6 +334,115 @@ class AzureDevOpsClient {
 
     return allWorkItems;
   }
+
+  async getEpicSummary(iterationPath) {
+    await this._loadFetch();
+    const wiqlUrl = `${this.baseUrl}/wit/wiql?api-version=${this.apiVersion}`;
+    
+    // Escape special characters in iteration path
+    const escapedIterationPath = iterationPath.replace(/'/g, "''");
+    
+    const wiqlQuery = {
+      query: `
+        SELECT [System.Id], [System.Title], [System.State], [System.AssignedTo], [System.Description], [Microsoft.VSTS.Scheduling.TargetDate]
+        FROM WorkItems
+        WHERE [System.TeamProject] = '${this.project}'
+        AND [System.WorkItemType] = 'Epic'
+        AND [System.IterationPath] = '${escapedIterationPath}'
+        ORDER BY [System.Id] DESC
+      `
+    };
+
+    console.log('Executing WIQL query:', wiqlQuery.query);
+
+    const response = await fetch(wiqlUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...this._getAuthHeader()
+      },
+      body: JSON.stringify(wiqlQuery)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('WIQL Query Error:', errorText);
+      throw new Error(`Failed to fetch epics: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    const epicRefs = data.workItems || [];
+    const epicIds = epicRefs.map(item => item.id);
+
+    if (epicIds.length === 0) {
+      return [];
+    }
+
+    // Fetch epic details in batches
+    const chunkSize = 200;
+    const allEpics = [];
+
+    for (let i = 0; i < epicIds.length; i += chunkSize) {
+      const chunk = epicIds.slice(i, i + chunkSize).join(",");
+      const batchUrl = `${this.baseUrl}/wit/workitems?ids=${chunk}&$expand=relations&api-version=${this.apiVersion}`;
+
+      const batchResponse = await fetch(batchUrl, {
+        headers: this._getAuthHeader()
+      });
+
+      if (!batchResponse.ok) {
+        const errorText = await batchResponse.text();
+        console.error('Batch Fetch Error:', errorText);
+        throw new Error(`Failed to fetch epic batch: ${batchResponse.status} - ${errorText}`);
+      }
+
+      const batchData = await batchResponse.json();
+      allEpics.push(...batchData.value);
+    }
+
+    // For each epic, fetch its child tasks in batches
+    for (const epic of allEpics) {
+      const childLinks = epic.relations?.filter(rel => 
+        rel.rel === 'System.LinkTypes.Hierarchy-Forward' || 
+        rel.rel === 'System.LinkTypes.Hierarchy-Reverse'
+      ) || [];
+
+      const childIds = childLinks.map(link => {
+        const urlParts = link.url.split('/');
+        return urlParts[urlParts.length - 1];
+      });
+
+      if (childIds.length > 0) {
+        // Fetch child tasks in batches of 200
+        const tasksChunkSize = 200;
+        const allChildTasks = [];
+
+        for (let i = 0; i < childIds.length; i += tasksChunkSize) {
+          const chunk = childIds.slice(i, i + tasksChunkSize).join(',');
+          const tasksUrl = `${this.baseUrl}/wit/workitems?ids=${chunk}&fields=System.Id,System.Title,System.State&api-version=${this.apiVersion}`;
+          
+          const tasksResponse = await fetch(tasksUrl, {
+            headers: this._getAuthHeader()
+          });
+
+          if (!tasksResponse.ok) {
+            const errorText = await tasksResponse.text();
+            console.error('Tasks Fetch Error:', errorText);
+            throw new Error(`Failed to fetch child tasks: ${tasksResponse.status} - ${errorText}`);
+          }
+
+          const tasksData = await tasksResponse.json();
+          allChildTasks.push(...tasksData.value);
+        }
+
+        epic.childTasks = allChildTasks;
+      } else {
+        epic.childTasks = [];
+      }
+    }
+
+    return allEpics;
+  }
 }
 
 module.exports = AzureDevOpsClient;

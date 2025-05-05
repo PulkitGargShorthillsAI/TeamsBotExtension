@@ -120,6 +120,7 @@ class ChatViewProvider {
     webviewView.webview.html = this._getHtml();
   
     webviewView.webview.onDidReceiveMessage(async msg => {
+      console.log('Received message in extension:', msg); // Debug log
       if (msg.command === 'resetPatToken') {
         await this._resetPatToken();
       } else if (msg.command === 'fetchOrganizations') {
@@ -138,6 +139,22 @@ class ChatViewProvider {
         // Add user message to chat history
         await this._addToChatHistory('user', text);
         this._onUserMessage(text.trim(), organization, project);
+      } else if (msg.command === 'copyToClipboard') {
+        console.log('Attempting to copy to clipboard:', msg.text); // Debug log
+        try {
+          await vscode.env.clipboard.writeText(msg.text);
+          console.log('Successfully copied to clipboard'); // Debug log
+          webviewView.webview.postMessage({ 
+            command: 'copyToClipboardResponse',
+            success: true
+          });
+        } catch (error) {
+          console.error('Failed to copy to clipboard:', error);
+          webviewView.webview.postMessage({ 
+            command: 'copyToClipboardResponse',
+            success: false
+          });
+        }
       }
     });
 
@@ -301,6 +318,15 @@ class ChatViewProvider {
         } else if (command.startsWith('@query_tickets')) {
           const query = command.substring('@query_tickets '.length).trim();
           await this._processTicketQuery(query, organization, project);
+        } else if (command.startsWith('@epic_summary')) {
+          const iterationPath = command.substring('@epic_summary '.length).trim();
+          if (!iterationPath) {
+            const errorMessage = "❌ Please specify an iteration path. Example: @epic_summary Sprint 9";
+            this._post(errorMessage);
+            await this._logInteraction(email, text, errorMessage);
+            return;
+          }
+          await this._showEpicSummary(organization, project, iterationPath);
         } else {
           const errorMessage = `I couldn't understand the command: ${command}`;
           this._post(errorMessage);
@@ -343,6 +369,7 @@ class ChatViewProvider {
       - #<id> @update title '<title>' description '<description>' → Update a ticket.
       - @board_summary → Show summary of all tickets on the board.
       - @sprint_summary → Show summary of tickets by sprint.
+      - @epic_summary <iteration_path> → Show summary of epics and their completed tasks for a specific iteration.
       - @overdue_tickets → Show tickets that are past their due date but still active or new.
       - @overdue_tickets of <name> → Show overdue tickets for a specific person.
       - @overdue_tickets my → Show your own overdue tickets.
@@ -454,6 +481,8 @@ class ChatViewProvider {
       User: "how are you?"
       Output: []
 
+      User: "Show epic summary for Sprint 1"
+      Output: ["@epic_summary Sprint 1"]
 
       User message:
       "${userMessage}"
@@ -1321,6 +1350,50 @@ class ChatViewProvider {
             }
           });
         });
+
+        // Add event listener for DOMContentLoaded to ensure elements are ready
+        window.addEventListener('DOMContentLoaded', function() {
+          console.log('DOM fully loaded and parsed');
+          initializeCopyButton();
+        });
+
+        // Add logging to the copy button initialization
+        function initializeCopyButton() {
+          console.log('Initializing copy button');
+          const copyButton = document.getElementById('copyButton');
+          const summaryContent = document.getElementById('summaryContent');
+
+          if (!copyButton || !summaryContent) {
+            console.error('Required elements not found');
+            return;
+          }
+
+          // Add click handler with logging
+          copyButton.addEventListener('click', function() {
+            console.log('Copy button clicked');
+            try {
+              const text = formatTableForClipboard();
+              console.log('Formatted text:', text);
+
+              vscode.postMessage({
+                command: 'copyToClipboard',
+                text: text
+              });
+              console.log('Message sent to extension:', { command: 'copyToClipboard', text });
+
+              copyButton.textContent = 'Copying...';
+              copyButton.style.backgroundColor = 'var(--vscode-badge-background)';
+            } catch (err) {
+              console.error('Error in click handler:', err);
+              copyButton.textContent = 'Error occurred';
+              setTimeout(() => {
+                copyButton.textContent = 'Copy to Clipboard';
+              }, 2000);
+            }
+          });
+
+          console.log('Copy functionality initialized');
+        }
       </script>
     </body>
     </html>`;
@@ -2292,6 +2365,238 @@ class ChatViewProvider {
       const errorMessage = `❌ Error creating ticket from commit: ${error.message}`;
       this._post(errorMessage);
       await this._logInteraction(email, userText, errorMessage);
+    }
+  }
+
+  async _showEpicSummary(organization, project, iterationPath) {
+    let email = null;
+    try {
+      email = await this._getEmail();
+      if (email === null) {
+        const errorMessage = `❌ Error: You are not authorized to view epics in this project. Please check your Azure DevOps permissions.`;
+        this._post(errorMessage);
+        await this._logInteraction('unknown', `@epic_summary ${iterationPath}`, errorMessage);
+        return;
+      }
+
+      const pat = await this._getPatToken();
+      const client = new AzureDevOpsClient(organization, project, pat);
+
+      // First, get all iterations to validate the path
+      const iterations = await client.getIterations();
+      const validIteration = iterations.find(iter => 
+        iter.name.toLowerCase() === iterationPath.toLowerCase() || 
+        iter.path.toLowerCase().includes(iterationPath.toLowerCase())
+      );
+
+      if (!validIteration) {
+        const availableIterations = iterations.map(iter => iter.name).join(', ');
+        const errorMessage = `❌ Invalid iteration path: "${iterationPath}". Available iterations are: ${availableIterations}`;
+        this._post(errorMessage);
+        await this._logInteraction(email, `@epic_summary ${iterationPath}`, errorMessage);
+        return;
+      }
+
+      // Use the full iteration path from the valid iteration
+      const fullIterationPath = validIteration.path;
+      
+      const epics = await client.getEpicSummary(fullIterationPath);
+      if (!epics || epics.length === 0) {
+        const message = `No epics found in iteration ${validIteration.name}.`;
+        this._post(message);
+        await this._logInteraction(email, `@epic_summary ${iterationPath}`, message);
+        return;
+      }
+
+      // Process each epic
+      const epicSummaries = [];
+      for (const epic of epics) {
+        const totalTasks = epic.childTasks.length;
+        const doneTasks = epic.childTasks.filter(task => task.fields['System.State'] === 'Done');
+        const completionPercentage = totalTasks > 0 ? Math.round((doneTasks.length / totalTasks) * 100) : 0;
+        
+        // Get Gemini summary for done tasks
+        let remarks = 'No completed tasks to summarize.';
+        if (doneTasks.length > 0) {
+          const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+          const prompt = `
+            Write a business oriented 1 liner description in layment terms about what has been done in epic based on below tasks.
+            Use plain text only, no formatting or styling.
+            Completed tasks:
+            ${doneTasks.map(task => `- ${task.fields['System.Title']}`).join('\n')}
+          `;
+          const response = await model.generateContent(prompt);
+          const result = response.response;
+          remarks = result.candidates[0].content.parts[0].text;
+        }
+
+        epicSummaries.push({
+          id: epic.id,
+          title: epic.fields['System.Title'],
+          description: epic.fields['System.Description'] || 'No description provided.',
+          owner: epic.fields['System.AssignedTo']?.displayName || 'Unassigned',
+          status: epic.fields['System.State'],
+          completionPercentage,
+          targetDate: epic.fields['Microsoft.VSTS.Scheduling.TargetDate'] || 'Not set',
+          remarks
+        });
+      }
+
+      // Generate HTML table with copy button
+      let html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <script>
+            window.addEventListener('load', function() {
+              console.log('Page loaded, initializing copy functionality');
+              const vscode = acquireVsCodeApi();
+              
+              function initializeCopyButton() {
+                const copyButton = document.getElementById('copyButton');
+                const summaryContent = document.getElementById('summaryContent');
+                
+                if (!copyButton || !summaryContent) {
+                  console.error('Required elements not found');
+                  return;
+                }
+                
+                function formatTableForClipboard() {
+                  const table = summaryContent.querySelector('table');
+                  const rows = table.querySelectorAll('tr');
+                  let text = [];
+                  
+                  // Add headers
+                  const headers = Array.from(rows[0].querySelectorAll('th'))
+                    .map(th => th.textContent.trim());
+                  text.push(headers.join('\\t'));
+                  
+                  // Add data rows
+                  for (let i = 1; i < rows.length; i++) {
+                    const row = [];
+                    const cols = rows[i].querySelectorAll('td');
+                    for (let j = 0; j < cols.length; j++) {
+                      let cellText = cols[j].textContent.trim();
+                      // Escape special characters and wrap in quotes if needed
+                      if (cellText.includes('\\t') || cellText.includes('\\n') || cellText.includes('"')) {
+                        cellText = '"' + cellText.replace(/"/g, '""') + '"';
+                      }
+                      row.push(cellText);
+                    }
+                    text.push(row.join('\\t'));
+                  }
+                  
+                  return text.join('\\n');
+                }
+                
+                // Add message listener
+                window.addEventListener('message', function handleMessage(event) {
+                  console.log('WebView received message:', event.data);
+                  const message = event.data;
+                  if (message.command === 'copyToClipboardResponse') {
+                    if (message.success) {
+                      copyButton.textContent = 'Copied!';
+                      copyButton.style.backgroundColor = 'var(--vscode-badge-background)';
+                    } else {
+                      copyButton.textContent = 'Failed to copy';
+                      copyButton.style.backgroundColor = 'var(--vscode-errorForeground)';
+                    }
+                    
+                    setTimeout(() => {
+                      copyButton.textContent = 'Copy to Clipboard';
+                      copyButton.style.backgroundColor = 'var(--vscode-button-background)';
+                    }, 2000);
+                  }
+                });
+                
+                // Add click handler
+                copyButton.addEventListener('click', function() {
+                  console.log('Copy button clicked');
+                  try {
+                    const text = formatTableForClipboard();
+                    console.log('Formatted text:', text);
+                    
+                    vscode.postMessage({
+                      command: 'copyToClipboard',
+                      text: text
+                    });
+                    
+                    copyButton.textContent = 'Copying...';
+                    copyButton.style.backgroundColor = 'var(--vscode-badge-background)';
+                  } catch (err) {
+                    console.error('Error in click handler:', err);
+                    copyButton.textContent = 'Error occurred';
+                    setTimeout(() => {
+                      copyButton.textContent = 'Copy to Clipboard';
+                    }, 2000);
+                  }
+                });
+                
+                console.log('Copy functionality initialized');
+              }
+              
+              // Try to initialize immediately
+              initializeCopyButton();
+              
+              // Also try after a short delay in case elements aren't ready yet
+              setTimeout(initializeCopyButton, 100);
+            });
+          </script>
+        </head>
+        <body>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <h3>Epic Summary for ${validIteration.name}</h3>
+            <button id="copyButton" style="padding: 6px 12px; background-color: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 4px; cursor: pointer; transition: background-color 0.2s;">
+              Copy to Clipboard
+            </button>
+          </div>
+          <div id="summaryContent">
+            <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+              <thead>
+                <tr style="background-color: var(--vscode-editor-inactiveSelectionBackground);">
+                  <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">Type</th>
+                  <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">ID</th>
+                  <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">Description</th>
+                  <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">Owner</th>
+                  <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">Status</th>
+                  <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">Completion %</th>
+                  <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">Expected Completion</th>
+                  <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">Remarks</th>
+                </tr>
+              </thead>
+              <tbody>
+      `;
+
+      for (const epic of epicSummaries) {
+        html += `
+          <tr>
+            <td style="padding: 8px; border: 1px solid var(--vscode-input-border);">Epic</td>
+            <td style="padding: 8px; border: 1px solid var(--vscode-input-border);">${epic.id}</td>
+            <td style="padding: 8px; border: 1px solid var(--vscode-input-border);">${epic.title}</td>
+            <td style="padding: 8px; border: 1px solid var(--vscode-input-border);">${epic.owner}</td>
+            <td style="padding: 8px; border: 1px solid var(--vscode-input-border);">${epic.status}</td>
+            <td style="padding: 8px; border: 1px solid var(--vscode-input-border);">${epic.completionPercentage}%</td>
+            <td style="padding: 8px; border: 1px solid var(--vscode-input-border);">${epic.targetDate}</td>
+            <td style="padding: 8px; border: 1px solid var(--vscode-input-border);">${epic.remarks}</td>
+          </tr>
+        `;
+      }
+
+      html += `
+              </tbody>
+            </table>
+          </div>
+        </body>
+        </html>
+      `;
+
+      this._post(html);
+      await this._logInteraction(email, `@epic_summary ${iterationPath}`, html);
+    } catch (error) {
+      const errorMessage = `❌ Error generating epic summary: ${error.message}`;
+      this._post(errorMessage);
+      await this._logInteraction(email || 'unknown', `@epic_summary ${iterationPath}`, errorMessage);
     }
   }
 }
