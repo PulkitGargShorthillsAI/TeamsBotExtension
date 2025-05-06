@@ -258,6 +258,22 @@ class AzureDevOpsClient {
     return currentIteration ? [currentIteration] : [];
   }
 
+  async getAllIterations() {
+    await this._loadFetch();
+    const url = `${this.baseUrl}/work/teamsettings/iterations?api-version=${this.apiVersion}`;
+    
+    const response = await fetch(url, {
+      headers: this._getAuthHeader()
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch iterations: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.value || [];
+  }
+
   async getOverdueTickets(asOfDate = null) {
     await this._loadFetch();
     const wiqlUrl = `${this.baseUrl}/wit/wiql?api-version=${this.apiVersion}`;

@@ -2383,7 +2383,7 @@ class ChatViewProvider {
       const client = new AzureDevOpsClient(organization, project, pat);
 
       // First, get all iterations to validate the path
-      const iterations = await client.getIterations();
+      const iterations = await client.getAllIterations();
       const validIteration = iterations.find(iter => 
         iter.name.toLowerCase() === iterationPath.toLowerCase() || 
         iter.path.toLowerCase().includes(iterationPath.toLowerCase())
