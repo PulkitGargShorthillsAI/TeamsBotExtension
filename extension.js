@@ -2302,13 +2302,13 @@ class ChatViewProvider {
 
         const commitSummary = `
           Commit Message:
-          ${commitMsg}
+          ${JSON.stringify(commitMsg).slice(1, -1)}
 
           Files Changed:
-          ${fileChanges}
+          ${JSON.stringify(fileChanges).slice(1, -1)}
 
           Detailed Changes:
-          ${detailedDiff}
+          ${JSON.stringify(detailedDiff).slice(1, -1)}
         `;
 
         console.log(fileChanges);
@@ -2317,25 +2317,32 @@ class ChatViewProvider {
         // 4. Use Gemini to generate title/description
         const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
         const prompt = `
-          You are an assistant that writes Azure DevOps ticket titles and descriptions from git commit info.
+You are a senior software engineer helping a project manager create clear, outcome-driven Azure DevOps ticket titles and descriptions from Git commit data.
 
-          Given this commit info:
-          ${commitSummary}
+Your job is to:
+- Understand the purpose behind the code changes
+- Capture what was **achieved** from a feature or task perspective
+- Write like a human who understands the business and engineering goals
 
-          Generate:
-          1. A short, formal title summarizing the main change.
-          2. A clear, professional description that:
-             - Summarizes what was changed and why
-             - Lists the files that were modified
-             - Explains the key changes in each file
-             - Highlights any important technical details or considerations
+Use the following commit summary:
+${commitSummary}
 
-          Output as JSON:
-          {
-            "title": "<title>",
-            "description": "<description>"
-          }
-        `;
+Generate a JSON with:
+1. "title": A short, formal title summarizing the main outcome or feature delivered (not just what was changed).
+2. "description": A detailed yet clear summary including:
+   - What functionality or requirement was achieved or fixed (project-facing summary)
+   - Why this change was necessary (brief rationale)
+   - A high-level overview of key file changes (not raw diffs, but what they accomplished)
+   - Any technical details relevant for QA, deployment, or PMs to understand
+   - (Optional) Mention of acceptance criteria if it can be inferred
+
+Only return the JSON in this format:
+{
+  "title": "<title>",
+  "description": "<description>"
+}
+`;
+
         const response = await model.generateContent(prompt);
         const result = response.response;
         const json = JSON.parse(this._removeJsonWrapper(result.candidates[0].content.parts[0].text));
