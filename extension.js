@@ -139,23 +139,7 @@ class ChatViewProvider {
         // Add user message to chat history
         await this._addToChatHistory('user', text);
         this._onUserMessage(text.trim(), organization, project);
-      } else if (msg.command === 'copyToClipboard') {
-        console.log('Attempting to copy to clipboard:', msg.text); // Debug log
-        try {
-          await vscode.env.clipboard.writeText(msg.text);
-          console.log('Successfully copied to clipboard'); // Debug log
-          webviewView.webview.postMessage({ 
-            command: 'copyToClipboardResponse',
-            success: true
-          });
-        } catch (error) {
-          console.error('Failed to copy to clipboard:', error);
-          webviewView.webview.postMessage({ 
-            command: 'copyToClipboardResponse',
-            success: false
-          });
-        }
-      }
+      } 
     });
 
     // Check if user is already signed in and fetch organizations
@@ -181,7 +165,7 @@ class ChatViewProvider {
 
   resetUI() {
     // Clear the chat messages
-    this._postMessage({ command: 'clearChat' });
+    // this._postMessage({ command: 'clearChat' });
   
     // Clear the dropdowns
     this._postMessage({ command: 'clearDropdowns' });
@@ -2288,6 +2272,15 @@ class ChatViewProvider {
         const commitCommand = commitId ? `git log ${commitId} -1 --pretty=%B` : 'git log -1 --pretty=%B';
         const { stdout: commitMsg } = await execAsync(commitCommand, { cwd: gitRoot });
         
+        // Get the commit hash
+        const hashCommand = commitId ? `git rev-parse ${commitId}` : 'git rev-parse HEAD';
+        const { stdout: commitHash } = await execAsync(hashCommand, { cwd: gitRoot });
+        const shortHash = commitHash.trim().substring(0, 7);
+        
+        // Get the remote URL
+        const { stdout: remoteUrl } = await execAsync('git config --get remote.origin.url', { cwd: gitRoot });
+        const repoUrl = remoteUrl.trim().replace('.git', '').replace('git@github.com:', 'https://github.com/');
+        
         // Get detailed changes for each file
         const showCommand = commitId ? `git show ${commitId} --name-status` : 'git show --name-status';
         const { stdout: fileChanges } = await execAsync(showCommand, { cwd: gitRoot });
@@ -2351,9 +2344,12 @@ Only return the JSON in this format:
 
         // 5. Structure the description
         const structuredDesc = await this._structureDesc(description);
+        
+        // Add GitHub commit link at the end of the structured description
+        const finalDesc = structuredDesc + `\n\n<b>GitHub Commit:</b> <a href="${repoUrl}/commit/${shortHash}" target="_blank">${shortHash}</a>`;
 
         // 6. Create the ticket
-        await this._makeTicket(title, structuredDesc, organization, project);
+        await this._makeTicket(title, finalDesc, organization, project);
 
         // 7. Log interaction
         const commitRef = commitId ? `commit ${commitId}` : 'last commit';
