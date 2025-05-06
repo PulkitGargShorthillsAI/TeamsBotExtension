@@ -2385,8 +2385,7 @@ class ChatViewProvider {
       // First, get all iterations to validate the path
       const iterations = await client.getAllIterations();
       const validIteration = iterations.find(iter => 
-        iter.name.toLowerCase() === iterationPath.toLowerCase() || 
-        iter.path.toLowerCase().includes(iterationPath.toLowerCase())
+        iter.name.toLowerCase() === iterationPath.toLowerCase()
       );
 
       if (!validIteration) {
@@ -2415,6 +2414,19 @@ class ChatViewProvider {
         const doneTasks = epic.childTasks.filter(task => task.fields['System.State'] === 'Done');
         const completionPercentage = totalTasks > 0 ? Math.round((doneTasks.length / totalTasks) * 100) : 0;
         
+        // Format the target date
+        let formattedTargetDate = 'Not set';
+        if (epic.fields['Microsoft.VSTS.Scheduling.TargetDate']) {
+          const targetDate = new Date(epic.fields['Microsoft.VSTS.Scheduling.TargetDate']);
+          if (!isNaN(targetDate.getTime())) {
+            formattedTargetDate = targetDate.toLocaleDateString('en-GB', {
+              day: '2-digit',
+              month: '2-digit',
+              year: 'numeric'
+            }).replace(/\//g, '-');
+          }
+        }
+
         // Get Gemini summary for done tasks
         let remarks = 'No completed tasks to summarize.';
         if (doneTasks.length > 0) {
@@ -2437,135 +2449,34 @@ class ChatViewProvider {
           owner: epic.fields['System.AssignedTo']?.displayName || 'Unassigned',
           status: epic.fields['System.State'],
           completionPercentage,
-          targetDate: epic.fields['Microsoft.VSTS.Scheduling.TargetDate'] || 'Not set',
+          targetDate: formattedTargetDate,
           remarks
         });
       }
 
-      // Generate HTML table with copy button
+      // Generate HTML table
       let html = `
         <!DOCTYPE html>
         <html>
         <head>
           <meta charset="UTF-8">
-          <script>
-            window.addEventListener('load', function() {
-              console.log('Page loaded, initializing copy functionality');
-              const vscode = acquireVsCodeApi();
-              
-              function initializeCopyButton() {
-                const copyButton = document.getElementById('copyButton');
-                const summaryContent = document.getElementById('summaryContent');
-                
-                if (!copyButton || !summaryContent) {
-                  console.error('Required elements not found');
-                  return;
-                }
-                
-                function formatTableForClipboard() {
-                  const table = summaryContent.querySelector('table');
-                  const rows = table.querySelectorAll('tr');
-                  let text = [];
-                  
-                  // Add headers
-                  const headers = Array.from(rows[0].querySelectorAll('th'))
-                    .map(th => th.textContent.trim());
-                  text.push(headers.join('\\t'));
-                  
-                  // Add data rows
-                  for (let i = 1; i < rows.length; i++) {
-                    const row = [];
-                    const cols = rows[i].querySelectorAll('td');
-                    for (let j = 0; j < cols.length; j++) {
-                      let cellText = cols[j].textContent.trim();
-                      // Escape special characters and wrap in quotes if needed
-                      if (cellText.includes('\\t') || cellText.includes('\\n') || cellText.includes('"')) {
-                        cellText = '"' + cellText.replace(/"/g, '""') + '"';
-                      }
-                      row.push(cellText);
-                    }
-                    text.push(row.join('\\t'));
-                  }
-                  
-                  return text.join('\\n');
-                }
-                
-                // Add message listener
-                window.addEventListener('message', function handleMessage(event) {
-                  console.log('WebView received message:', event.data);
-                  const message = event.data;
-                  if (message.command === 'copyToClipboardResponse') {
-                    if (message.success) {
-                      copyButton.textContent = 'Copied!';
-                      copyButton.style.backgroundColor = 'var(--vscode-badge-background)';
-                    } else {
-                      copyButton.textContent = 'Failed to copy';
-                      copyButton.style.backgroundColor = 'var(--vscode-errorForeground)';
-                    }
-                    
-                    setTimeout(() => {
-                      copyButton.textContent = 'Copy to Clipboard';
-                      copyButton.style.backgroundColor = 'var(--vscode-button-background)';
-                    }, 2000);
-                  }
-                });
-                
-                // Add click handler
-                copyButton.addEventListener('click', function() {
-                  console.log('Copy button clicked');
-                  try {
-                    const text = formatTableForClipboard();
-                    console.log('Formatted text:', text);
-                    
-                    vscode.postMessage({
-                      command: 'copyToClipboard',
-                      text: text
-                    });
-                    
-                    copyButton.textContent = 'Copying...';
-                    copyButton.style.backgroundColor = 'var(--vscode-badge-background)';
-                  } catch (err) {
-                    console.error('Error in click handler:', err);
-                    copyButton.textContent = 'Error occurred';
-                    setTimeout(() => {
-                      copyButton.textContent = 'Copy to Clipboard';
-                    }, 2000);
-                  }
-                });
-                
-                console.log('Copy functionality initialized');
-              }
-              
-              // Try to initialize immediately
-              initializeCopyButton();
-              
-              // Also try after a short delay in case elements aren't ready yet
-              setTimeout(initializeCopyButton, 100);
-            });
-          </script>
         </head>
         <body>
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-            <h3>Epic Summary for ${validIteration.name}</h3>
-            <button id="copyButton" style="padding: 6px 12px; background-color: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 4px; cursor: pointer; transition: background-color 0.2s;">
-              Copy to Clipboard
-            </button>
-          </div>
-          <div id="summaryContent">
-            <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
-              <thead>
-                <tr style="background-color: var(--vscode-editor-inactiveSelectionBackground);">
-                  <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">Type</th>
-                  <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">ID</th>
-                  <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">Description</th>
-                  <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">Owner</th>
-                  <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">Status</th>
-                  <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">Completion %</th>
-                  <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">Expected Completion</th>
-                  <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">Remarks</th>
-                </tr>
-              </thead>
-              <tbody>
+          <h3>Epic Summary for ${validIteration.name}</h3>
+          <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+            <thead>
+              <tr style="background-color: var(--vscode-editor-inactiveSelectionBackground);">
+                <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">Type</th>
+                <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">ID</th>
+                <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">Description</th>
+                <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">Owner</th>
+                <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">Status</th>
+                <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">Completion %</th>
+                <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">Expected Completion</th>
+                <th style="padding: 8px; border: 1px solid var(--vscode-input-border);">Remarks</th>
+              </tr>
+            </thead>
+            <tbody>
       `;
 
       for (const epic of epicSummaries) {
@@ -2586,8 +2497,7 @@ class ChatViewProvider {
       html += `
               </tbody>
             </table>
-          </div>
-        </body>
+          </body>
         </html>
       `;
 
