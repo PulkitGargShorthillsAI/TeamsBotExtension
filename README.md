@@ -35,6 +35,8 @@ sudo dpkg -i /tmp/code_latest_amd64.deb
    - **Expiration:** Choose a suitable expiration (e.g., 90 days, 180 days) recommended will be 1 year.
    - Click `Create`.
 
+   ![alt text](assets/token_type.png)
+
    ![alt text](assets/token_settings.png)
 
    - Note - If you choose a specific organization the PAT token wont work
@@ -83,6 +85,14 @@ You can interact with TeamsBot using natural language or the following commands:
   _Example:_  
   `@create_ticket Fix login bug description 'Users cannot log in with Google accounts.'`
 
+- `@create_ticket_from_last_commit`  
+  Create a ticket based on the last git commit in the workspace. The bot will analyze the commit message and changes to generate a meaningful ticket.
+
+- `@create_ticket_from_commit <commit_id>`  
+  Create a ticket based on a specific git commit ID.  
+  _Example:_  
+  `@create_ticket_from_commit abc123`
+
 - `@view_tickets`  
   View all your open tickets.
 
@@ -101,13 +111,41 @@ You can interact with TeamsBot using natural language or the following commands:
   _Example:_  
   `#1234 @update title 'Improve UI' description 'Redesign the dashboard for better usability.'`
 
-### Board and Sprint Summaries
+### Board and Sprint Management
 
 - `@board_summary`  
-  Show a summary of all tickets on the board.
+  Show a summary of all tickets on the board, including counts by state and per user.
 
 - `@sprint_summary`  
-  Show a summary of tickets by sprint.
+  Show a detailed summary of tickets by sprint, including assignments and states.
+
+- `@epic_summary <iteration_path>`  
+  Show a summary of epics and their completed tasks for a specific iteration.  
+  _Example:_  
+  `@epic_summary Sprint 1`
+
+### Overdue Tickets
+
+- `@overdue_tickets`  
+  Show all tickets that are past their due date but still active or new.
+
+- `@overdue_tickets my`  
+  Show your own overdue tickets.
+
+- `@overdue_tickets of <name>`  
+  Show overdue tickets for a specific person.  
+  _Example:_  
+  `@overdue_tickets of John`
+
+- `@overdue_tickets as of <date>`  
+  Show overdue tickets as of a specific date.  
+  _Example:_  
+  `@overdue_tickets as of 1st May` or `@overdue_tickets as of 20 Jan 2024`
+
+- `@overdue_tickets of <name> as of <date>`  
+  Show overdue tickets for a specific person as of a specific date.  
+  _Example:_  
+  `@overdue_tickets of John as of 3rd May`
 
 ### Querying Tickets
 
