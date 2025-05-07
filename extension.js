@@ -195,13 +195,13 @@ class ChatViewProvider {
       email = await this._getEmail();
       if (!email) {
         this._post('❌ Please log in with an authorized email to use the chatbot.');
-        await this._logInteraction('unknown', text, '❌ Please log in with an authorized email to use the chatbot.');
+        await this._logInteraction('unknown', this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
         return;
       }
 
       if (!organization || !project) {
         this._post('❌ Please select both an organization and a project before proceeding.');
-        await this._logInteraction(email, text, '❌ Please select both an organization and a project before proceeding.');
+        await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
         return;
       }
   
@@ -211,7 +211,7 @@ class ChatViewProvider {
       if (!commands || commands.length === 0) {
         const errorMessage = "I couldn't understand your request. Please try again.";
         this._post(errorMessage);
-        await this._logInteraction(email, text, errorMessage);
+        await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
         return;
       }
   
@@ -227,7 +227,7 @@ class ChatViewProvider {
           } else {
             const errorMessage = "❌ Invalid commit ID format. Please provide a valid commit hash.";
             this._post(errorMessage);
-            await this._logInteraction(email, text, errorMessage);
+            await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
           }
         }
         else if (command.startsWith('@create_ticket')) {
@@ -243,7 +243,7 @@ class ChatViewProvider {
               const message = `Got it! Title: <b>${title}</b><br>
                 Please describe what needs to be done in simple terms, or type "skip", "leave it blank", or "leave blank" to proceed without a description.`;
               this._post(message);
-              await this._logInteraction(email, text, message);
+              await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
             }
           }
         }
@@ -263,7 +263,7 @@ class ChatViewProvider {
             Feel free to ask me anything related to these commands!
           `;
           this._post(helpMessage);
-          await this._logInteraction(email, text, helpMessage);
+          await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
         }
         else if (command.startsWith('@overdue_tickets')) {
           const params = await this._parseOverdueTicketsCommand(command);
@@ -293,7 +293,7 @@ class ChatViewProvider {
           } else {
             const errorMessage = "❌ Invalid update command format. Please use: #<id> @update title \"<title>\" description \"<description>\"";
             this._post(errorMessage);
-            await this._logInteraction(email, text, errorMessage);
+            await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
           }
         } else if (command === '@board_summary') {
           await this._showBoardSummary(organization, project);
@@ -307,21 +307,21 @@ class ChatViewProvider {
           if (!iterationPath) {
             const errorMessage = "❌ Please specify an iteration path. Example: @epic_summary Sprint 9";
             this._post(errorMessage);
-            await this._logInteraction(email, text, errorMessage);
+            await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
             return;
           }
           await this._showEpicSummary(organization, project, iterationPath);
         } else {
           const errorMessage = `I couldn't understand the command: ${command}`;
           this._post(errorMessage);
-          await this._logInteraction(email, text, errorMessage);
+          await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
         }
       }
     } catch (error) {
       console.error('Error handling user message:', error);
       const errorMessage = `❌ An error occurred: ${error.message}`;
       this._post(errorMessage);
-      await this._logInteraction(email || 'unknown', text, errorMessage);
+      await this._logInteraction(email || 'unknown', this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     }
   }
 
@@ -519,7 +519,7 @@ class ChatViewProvider {
       if (!workItems || workItems.length === 0) {
         const message = 'No work items found on the board.';
         this._post(message);
-        await this._logInteraction(email, `@query_tickets ${query}`, message);
+        await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
         return;
       }
 
@@ -579,13 +579,24 @@ class ChatViewProvider {
       const response = await model.generateContent(prompt);
       const result = response.response.text();
       const output = result.replace(/```html|```/g, '').trim();
+
+
+      // Get token counts from the usageMetadata
+      const inputTokens = response.response.usageMetadata?.promptTokenCount || 0;
+      const outputTokens = response.response.usageMetadata?.candidatesTokenCount || 0;
+
+      console.log('Token Counts:', { inputTokens, outputTokens });
+
+      // Store token counts for logging
+      this.lastInteractionTokens['input'] += inputTokens;
+      this.lastInteractionTokens['output'] += outputTokens;
       
       this._post(output);
-      await this._logInteraction(email, `@query_tickets ${query}`, output);
+      await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     } catch (error) {
       const errorMessage = `❌ Error processing query: ${error.message}`;
       this._post(errorMessage);
-      await this._logInteraction(email, `@query_tickets ${query}`, errorMessage);
+      await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     }
   }
 
@@ -614,21 +625,22 @@ class ChatViewProvider {
 
     const response = await model.generateContent(prompt);
     console.log('Structure Desc Response:', JSON.stringify(response, null, 2));
+
+
+
     
     const result = response.response;
     console.log('Structure Desc Result:', JSON.stringify(result, null, 2));
     
     // Get token counts from the usageMetadata
-    const inputTokens = result.usageMetadata?.promptTokenCount || 0;
-    const outputTokens = result.usageMetadata?.candidatesTokenCount || 0;
+    const inputTokens = response.response.usageMetadata?.promptTokenCount || 0;
+    const outputTokens = response.response.usageMetadata?.candidatesTokenCount || 0;
 
-    console.log('Structure Desc Token Counts:', { inputTokens, outputTokens });
+    console.log('Token Counts:', { inputTokens, outputTokens });
 
     // Store token counts for logging
-    this.lastInteractionTokens = {
-      input: inputTokens,
-      output: outputTokens
-    };
+    this.lastInteractionTokens['input'] += inputTokens;
+    this.lastInteractionTokens['output'] += outputTokens;
 
     return result.candidates[0].content.parts[0].text;
   }
@@ -679,8 +691,11 @@ class ChatViewProvider {
 
       const wi = await client.createWorkItem('Task', patch);
       this._post(`✅ Created <b>#${wi.id}</b> "${title}"<br>${htmlDesc}<br>Due date set to today at 7 PM.`);
+
+      this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     } catch (e) {
       this._post(`❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`);
+      this._logInteraction(email || 'unknown', this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     }
   }
 
@@ -690,7 +705,7 @@ class ChatViewProvider {
       if (email === null) {
         const errorMessage = `❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`;
         this._post(errorMessage);
-        await this._logInteraction(email, '@view_tickets', errorMessage);
+        await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
         return;
       }
 
@@ -704,7 +719,7 @@ class ChatViewProvider {
         if (!workItem) {
           const errorMessage = `❌ Work item with ID <b>${workItemId}</b> not found.`;
           this._post(errorMessage);
-          await this._logInteraction(email, `@view_tickets ${workItemId}`, errorMessage);
+          await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
           return;
         }
 
@@ -712,14 +727,14 @@ class ChatViewProvider {
         const history = await this._getWorkItemHistory(organization, project, workItemId);
         const details = this._formatWorkItem(workItem, history);
         this._post(details);
-        await this._logInteraction(email, `@view_tickets ${workItemId}`, details);
+        await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
       } else {
         // Fetch all assigned work items
         const items = await client.getAssignedWorkItems(email);
         if (items.length === 0) {
           const message = 'You have no open tickets.';
           this._post(message);
-          await this._logInteraction(email, '@view_tickets', message);
+          await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
         } else {
           // Group tickets by state
           const ticketsByState = items.reduce((acc, ticket) => {
@@ -762,35 +777,35 @@ class ChatViewProvider {
           });
 
           this._post(message);
-          await this._logInteraction(email, '@view_tickets', message);
+          await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
         }
       }
     } catch (e) {
       const errorMessage = `❌ Couldn't fetch tickets: ${e.message}`;
       this._post(errorMessage);
-      await this._logInteraction(email, '@view_tickets', errorMessage);
+      await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     }
   }
 
-  async _chatReply(msg) {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-    const response = await model.generateContent(msg);
-    const result = response.response;
+  // async _chatReply(msg) {
+  //   const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  //   const response = await model.generateContent(msg);
+  //   const result = response.response;
     
-    // Get token counts from the usageMetadata
-    const inputTokens = result.usageMetadata?.promptTokenCount || 0;
-    const outputTokens = result.usageMetadata?.candidatesTokenCount || 0;
+  //   // Get token counts from the usageMetadata
+  //   const inputTokens = result.usageMetadata?.promptTokenCount || 0;
+  //   const outputTokens = result.usageMetadata?.candidatesTokenCount || 0;
 
-    console.log('Chat Reply Token Counts:', { inputTokens, outputTokens });
+  //   console.log('Chat Reply Token Counts:', { inputTokens, outputTokens });
 
-    // Store token counts for logging
-    this.lastInteractionTokens = {
-      input: inputTokens,
-      output: outputTokens
-    };
+  //   // Store token counts for logging
+  //   this.lastInteractionTokens = {
+  //     input: inputTokens,
+  //     output: outputTokens
+  //   };
 
-    return result.candidates[0].content.parts[0].text;
-  }
+  //   return result.candidates[0].content.parts[0].text;
+  // }
 
   async _getEmail() {
     try {
@@ -1520,7 +1535,7 @@ class ChatViewProvider {
       if (email === null) {
         const errorMessage = `❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`;
         this._post(errorMessage);
-        await this._logInteraction(email, `#${workItemId} @comment ${commentText}`, errorMessage);
+        await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
         return;
       }
 
@@ -1532,16 +1547,16 @@ class ChatViewProvider {
       if (response) {
         const message = `✅ Comment added to work item <b>#${workItemId}</b>: "${commentText}"`;
         this._post(message);
-        await this._logInteraction(email, `#${workItemId} @comment ${commentText}`, message);
+        await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
       } else {
         const errorMessage = `❌ Failed to add comment to work item <b>#${workItemId}</b>.`;
         this._post(errorMessage);
-        await this._logInteraction(email, `#${workItemId} @comment ${commentText}`, errorMessage);
+        await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
       }
     } catch (error) {
       const errorMessage = `❌ An error occurred while adding the comment: ${error.message}`;
       this._post(errorMessage);
-      await this._logInteraction(email, `#${workItemId} @comment ${commentText}`, errorMessage);
+      await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     }
   }
 
@@ -1551,7 +1566,7 @@ class ChatViewProvider {
       if (email === null) {
         const errorMessage = `❌ Error: You are not authorized to update tickets in this project. Please check your Azure DevOps permissions.`;
         this._post(errorMessage);
-        await this._logInteraction(email, `#${workItemId} @update title "${title}" description "${description}"`, errorMessage);
+        await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
         return;
       }
 
@@ -1563,11 +1578,11 @@ class ChatViewProvider {
       await client.updateWorkItem(workItemId, title, structuredDesc);
       const message = `✅ Updated ticket <b>#${workItemId}</b> with new title and description.`;
       this._post(message);
-      await this._logInteraction(email, `#${workItemId} @update title "${title}" description "${description}"`, message);
+      await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     } catch (error) {
       const errorMessage = `❌ Error updating ticket: ${error.message}`;
       this._post(errorMessage);
-      await this._logInteraction(email, `#${workItemId} @update title "${title}" description "${description}"`, errorMessage);
+      await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     }
   }
 
@@ -1859,17 +1874,17 @@ class ChatViewProvider {
       if (!workItems || workItems.length === 0) {
         const message = 'No work items found on the board.';
         this._post(message);
-        await this._logInteraction(email, '@board_summary', message);
+        await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
         return;
       }
 
       const summary = this._generateOverallTicketSummary(workItems);
       this._post(summary);
-      await this._logInteraction(email, '@board_summary', summary);
+      await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     } catch (error) {
       const errorMessage = `❌ Error generating board summary: ${error.message}`;
       this._post(errorMessage);
-      await this._logInteraction(email, '@board_summary', errorMessage);
+      await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     }
   }
 
@@ -1883,17 +1898,17 @@ class ChatViewProvider {
       if (!workItems || workItems.length === 0) {
         const message = 'No work items found on the board.';
         this._post(message);
-        await this._logInteraction(email, '@sprint_summary', message);
+        await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
         return;
       }
 
       const summary = this._generateSprintSummary(workItems);
       this._post(summary);
-      await this._logInteraction(email, '@sprint_summary', summary);
+      await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     } catch (error) {
       const errorMessage = `❌ Error generating sprint summary: ${error.message}`;
       this._post(errorMessage);
-      await this._logInteraction(email, '@sprint_summary', errorMessage);
+      await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     }
   }
 
@@ -1989,7 +2004,7 @@ class ChatViewProvider {
     return summary;
   }
 
-  async _logInteraction(email, userInput, botOutput) {
+  async _logInteraction(email, inputTokens, outputTokens) {
     try {
       await initializeFetch();
       const logUrl = process.env.LOGGING_URL;
@@ -1998,12 +2013,14 @@ class ChatViewProvider {
         return;
       }
 
-      // Use the stored token counts from the last Gemini interaction
-      const inputTokens = this.lastInteractionTokens?.input || 0;
-      const outputTokens = this.lastInteractionTokens?.output || 0;
+      console.log('Logging interaction:', { email, inputTokens, outputTokens });
+      
 
-      console.log('Last Interaction Tokens:', this.lastInteractionTokens);
-      console.log('Logging tokens:', { inputTokens, outputTokens });
+      // Convert token counts to integers
+      const inputTokensInt = parseInt(inputTokens) || 0;
+      const outputTokensInt = parseInt(outputTokens) || 0;
+
+      console.log('Logging tokens:', { inputTokensInt, outputTokensInt });
 
       const response = await fetch(logUrl, {
         method: 'POST',
@@ -2012,8 +2029,8 @@ class ChatViewProvider {
         },
         body: JSON.stringify({
           email: email,
-          total_input_tokens: inputTokens,
-          total_output_tokens: outputTokens
+          total_input_tokens: inputTokensInt,
+          total_output_tokens: outputTokensInt
         })
       });
 
@@ -2022,7 +2039,8 @@ class ChatViewProvider {
       }
 
       // Reset the token counts after logging
-      this.lastInteractionTokens = null;
+      this.lastInteractionTokens['input'] = 0;
+      this.lastInteractionTokens['output'] = 0;
     } catch (error) {
       console.error('Error logging interaction:', error);
     }
@@ -2038,7 +2056,7 @@ class ChatViewProvider {
       // Handle error from command parsing
       if (params.error) {
         this._post(`❌ ${params.error}`);
-        await this._logInteraction(email || 'unknown', '@overdue_tickets', params.error);
+        await this._logInteraction(email || 'unknown', this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
         return;
       }
 
@@ -2049,7 +2067,7 @@ class ChatViewProvider {
           ? `No overdue tickets found as of ${params.date.toLocaleDateString()}.`
           : 'No overdue tickets found.';
         this._post(message);
-        await this._logInteraction(email || 'unknown', '@overdue_tickets', message);
+        await this._logInteraction(email || 'unknown', this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
         return;
       }
 
@@ -2064,7 +2082,7 @@ class ChatViewProvider {
           ? `No overdue tickets with valid due dates found as of ${params.date.toLocaleDateString()}.`
           : 'No overdue tickets with valid due dates found.';
         this._post(message);
-        await this._logInteraction(email || 'unknown', '@overdue_tickets', message);
+        await this._logInteraction(email || 'unknown', this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
         return;
       }
 
@@ -2087,7 +2105,7 @@ class ChatViewProvider {
             ? `No overdue tickets found as of ${params.date.toLocaleDateString()}.`
             : 'No overdue tickets found.';
         this._post(message);
-        await this._logInteraction(email || 'unknown', '@overdue_tickets', message);
+        await this._logInteraction(email || 'unknown', this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
         return;
       }
 
@@ -2156,11 +2174,11 @@ class ChatViewProvider {
       }
 
       this._post(message);
-      await this._logInteraction(email || 'unknown', '@overdue_tickets', message);
+      await this._logInteraction(email || 'unknown', this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     } catch (error) {
       const errorMessage = `❌ Error fetching overdue tickets: ${error.message}`;
       this._post(errorMessage);
-      await this._logInteraction(email || 'unknown', '@overdue_tickets', errorMessage);
+      await this._logInteraction(email || 'unknown', this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     }
   }
 
@@ -2342,6 +2360,18 @@ Only return the JSON in this format:
         const title = json.title;
         const description = json.description;
 
+
+
+        // Get token counts from the usageMetadata
+        const inputTokens = response.response.usageMetadata?.promptTokenCount || 0;
+        const outputTokens = response.response.usageMetadata?.candidatesTokenCount || 0;
+
+        console.log('Token Counts:', { inputTokens, outputTokens });
+
+        // Store token counts for logging
+        this.lastInteractionTokens['input'] += inputTokens;
+        this.lastInteractionTokens['output'] += outputTokens;
+
         // 5. Structure the description
         const structuredDesc = await this._structureDesc(description);
         
@@ -2353,9 +2383,10 @@ Only return the JSON in this format:
 
         // 7. Log interaction
         const commitRef = commitId ? `commit ${commitId}` : 'last commit';
-        await this._logInteraction(email, userText, `Created ticket from ${commitRef}: ${title}`);
+        await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
         this._post(`✅ Created ticket from ${commitRef}: "${title}"`);
       } catch (gitError) {
+        this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
         if (gitError.message.includes('No commit information found')) {
           throw new Error('No commits found in this repository. Please make at least one commit first.');
         } else if (gitError.message.includes('unknown revision')) {
@@ -2363,11 +2394,12 @@ Only return the JSON in this format:
         } else {
           throw new Error(`Git error: ${gitError.message}`);
         }
+
       }
     } catch (error) {
       const errorMessage = `❌ Error creating ticket from commit: ${error.message}`;
       this._post(errorMessage);
-      await this._logInteraction(email, userText, errorMessage);
+      await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     }
   }
 
@@ -2378,7 +2410,7 @@ Only return the JSON in this format:
       if (email === null) {
         const errorMessage = `❌ Error: You are not authorized to view epics in this project. Please check your Azure DevOps permissions.`;
         this._post(errorMessage);
-        await this._logInteraction('unknown', `@epic_summary ${iterationPath}`, errorMessage);
+        await this._logInteraction('unknown', this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
         return;
       }
 
@@ -2395,7 +2427,7 @@ Only return the JSON in this format:
         const availableIterations = iterations.map(iter => iter.name).join(', ');
         const errorMessage = `❌ Invalid iteration path: "${iterationPath}". Available iterations are: ${availableIterations}`;
         this._post(errorMessage);
-        await this._logInteraction(email, `@epic_summary ${iterationPath}`, errorMessage);
+        await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
         return;
       }
 
@@ -2406,7 +2438,7 @@ Only return the JSON in this format:
       if (!epics || epics.length === 0) {
         const message = `No epics found in iteration ${validIteration.name}.`;
         this._post(message);
-        await this._logInteraction(email, `@epic_summary ${iterationPath}`, message);
+        await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
         return;
       }
 
@@ -2443,6 +2475,21 @@ Only return the JSON in this format:
           const response = await model.generateContent(prompt);
           const result = response.response;
           remarks = result.candidates[0].content.parts[0].text;
+
+
+          // Get token counts from the usageMetadata
+          const inputTokens = response.response.usageMetadata?.promptTokenCount || 0;
+          const outputTokens = response.response.usageMetadata?.candidatesTokenCount || 0;
+
+          console.log('Token Counts:', { inputTokens, outputTokens });
+
+          // Store token counts for logging
+          this.lastInteractionTokens['input'] += inputTokens;
+          this.lastInteractionTokens['output'] += outputTokens;
+
+
+          console.log(this.lastInteractionTokens);
+          
         }
 
         epicSummaries.push({
@@ -2505,11 +2552,11 @@ Only return the JSON in this format:
       `;
 
       this._post(html);
-      await this._logInteraction(email, `@epic_summary ${iterationPath}`, html);
+      await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     } catch (error) {
       const errorMessage = `❌ Error generating epic summary: ${error.message}`;
       this._post(errorMessage);
-      await this._logInteraction(email || 'unknown', `@epic_summary ${iterationPath}`, errorMessage);
+      await this._logInteraction(email || 'unknown', this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     }
   }
 }
