@@ -230,6 +230,18 @@ class ChatViewProvider {
             await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
           }
         }
+        else if (command.startsWith('#') && command.includes('@update_with_commit')) {
+          const match = command.match(/^#(\d+)\s+@update_with_commit\s+([a-f0-9]+)$/i);
+          if (match) {
+            const workItemId = parseInt(match[1], 10);
+            const commitId = match[2].trim();
+            await this._updateTicketWithCommit(workItemId, commitId, organization, project);
+          } else {
+            const errorMessage = "❌ Invalid command format. Please use: #<id> @update_with_commit <commit_id>";
+            this._post(errorMessage);
+            await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
+          }
+        }
         else if (command.startsWith('@create_ticket')) {
           const match = command.match(/^@create_ticket\s+(.+?)(?:\s+description\s+'(.+)')?$/i);
           if (match) {
@@ -351,6 +363,7 @@ class ChatViewProvider {
       - @create_ticket_from_commit <commit_id> → Create a ticket based on a specific git commit ID.
       - #<id> @comment <comment text> → Add a comment to a ticket.
       - #<id> @update title '<title>' description '<description>' → Update a ticket.
+      - #<id> @update_with_commit <commit_id> → Update a ticket with information from a specific git commit.
       - @board_summary → Show summary of all tickets on the board.
       - @sprint_summary → Show summary of tickets by sprint.
       - @epic_summary <iteration_path> → Show summary of epics and their completed tasks for a specific iteration.
@@ -381,6 +394,10 @@ class ChatViewProvider {
       - For regular ticket queries (non-overdue):
         - Use @query_tickets for general ticket queries about assignments or sprints
         - Do NOT use @query_tickets for overdue ticket queries
+      - For ticket updates with commits:
+        - Use #<id> @update_with_commit <commit_id> when updating a ticket with commit information
+        - The commit ID must be a valid git commit hash
+        - The ticket ID must be a valid number
       - If the user gives a casual or layman description for creating or updating a ticket:
         - Create a short, professional, formal title summarizing the task.
         - Write a clear, well-phrased formal description based on the user's input.
@@ -438,6 +455,15 @@ class ChatViewProvider {
       User: "Update ticket 1348, stored PAT token locally instead of MySQL"
       Output: ["#1348 @update title 'Store PAT Token Locally' description 'Implemented functionality to securely store the PAT token locally within the VS Code extension, removing dependency on a remote MySQL server.'"]
 
+      User: "Update ticket 1234 with commit abc123"
+      Output: ["#1234 @update_with_commit abc123"]
+
+      User: "Update ticket 5678 with the changes from commit def456"
+      Output: ["#5678 @update_with_commit def456"]
+
+      User: "Update ticket 9012 with commit ghi789 and then show it to me"
+      Output: ["#9012 @update_with_commit ghi789", "@view_tickets 9012"]
+
       User: "Comment on ticket 1234 that this needs urgent attention and then show it to me"
       Output: ["#1234 @comment this needs urgent attention", "@view_tickets 1234"]
 
@@ -480,6 +506,10 @@ class ChatViewProvider {
         - NEVER use today's date unless explicitly mentioned
         - Keep ordinal numbers (1st, 2nd, 3rd, etc.) in the date
         - The date in the output must match exactly what the user specified
+      - For ticket updates with commits:
+        - Use the exact format #<id> @update_with_commit <commit_id>
+        - Preserve the exact commit ID from the user's message
+        - Ensure the ticket ID is a valid number
       - Output only a clean JSON array of valid commands.
       `;
 
@@ -1581,6 +1611,145 @@ class ChatViewProvider {
       await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     } catch (error) {
       const errorMessage = `❌ Error updating ticket: ${error.message}`;
+      this._post(errorMessage);
+      await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
+    }
+  }
+
+  async _updateTicketWithCommit(workItemId, commitId, organization, project) {
+    try {
+      const email = await this._getEmail();
+      if (email === null) {
+        const errorMessage = `❌ Error: You are not authorized to update tickets in this project. Please check your Azure DevOps permissions.`;
+        this._post(errorMessage);
+        await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
+        return;
+      }
+
+      // 1. Get the current workspace folder
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      if (!workspaceFolders || workspaceFolders.length === 0) {
+        throw new Error('No workspace folder found. Please open a workspace first.');
+      }
+
+      // 2. Find the git repository root
+      let gitRoot;
+      try {
+        const { stdout } = await execAsync('git rev-parse --show-toplevel', { 
+          cwd: workspaceFolders[0].uri.fsPath 
+        });
+        gitRoot = stdout.trim();
+      } catch (error) {
+        if (error.message.includes('not a git repository')) {
+          throw new Error('This workspace is not a git repository. Please initialize git first.');
+        }
+        throw error;
+      }
+
+      // 3. Get commit information
+      try {
+        // Get commit message
+        const { stdout: commitMsg } = await execAsync(`git log ${commitId} -1 --pretty=%B`, { cwd: gitRoot });
+        
+        // Get the commit hash
+        const { stdout: commitHash } = await execAsync(`git rev-parse ${commitId}`, { cwd: gitRoot });
+        const shortHash = commitHash.trim().substring(0, 7);
+        
+        // Get the remote URL
+        const { stdout: remoteUrl } = await execAsync('git config --get remote.origin.url', { cwd: gitRoot });
+        const repoUrl = remoteUrl.trim().replace('.git', '').replace('git@github.com:', 'https://github.com/');
+        
+        // Get detailed changes
+        const { stdout: fileChanges } = await execAsync(`git show ${commitId} --name-status`, { cwd: gitRoot });
+        const { stdout: detailedDiff } = await execAsync(`git show ${commitId} -p`, { cwd: gitRoot });
+
+        if (!commitMsg || !fileChanges || !detailedDiff) {
+          throw new Error('No commit information found. Make sure the commit ID is valid.');
+        }
+
+        const commitSummary = `
+          Commit Message:
+          ${JSON.stringify(commitMsg).slice(1, -1)}
+
+          Files Changed:
+          ${JSON.stringify(fileChanges).slice(1, -1)}
+
+          Detailed Changes:
+          ${JSON.stringify(detailedDiff).slice(1, -1)}
+        `;
+
+        // 4. Use Gemini to generate title/description
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+        const prompt = `
+You are a senior software engineer helping a project manager create clear, outcome-driven Azure DevOps ticket titles and descriptions from Git commit data.
+
+Your job is to:
+- Understand the purpose behind the code changes
+- Capture what was **achieved** from a feature or task perspective
+- Write like a human who understands the business and engineering goals
+
+Use the following commit summary:
+${commitSummary}
+
+Generate a JSON with:
+1. "title": A short, formal title summarizing the main outcome or feature delivered (not just what was changed).
+2. "description": A detailed yet clear summary including:
+   - What functionality or requirement was achieved or fixed (project-facing summary)
+   - Why this change was necessary (brief rationale)
+   - A high-level overview of key file changes (not raw diffs, but what they accomplished)
+   - Any technical details relevant for QA, deployment, or PMs to understand
+   - (Optional) Mention of acceptance criteria if it can be inferred
+
+Only return the JSON in this format:
+{
+  "title": "<title>",
+  "description": "<description>"
+}
+`;
+
+        const response = await model.generateContent(prompt);
+        const result = response.response;
+        const json = JSON.parse(this._removeJsonWrapper(result.candidates[0].content.parts[0].text));
+        const title = json.title;
+        const description = json.description;
+
+        // Get token counts from the usageMetadata
+        const inputTokens = response.response.usageMetadata?.promptTokenCount || 0;
+        const outputTokens = response.response.usageMetadata?.candidatesTokenCount || 0;
+
+        // Store token counts for logging
+        this.lastInteractionTokens['input'] += inputTokens;
+        this.lastInteractionTokens['output'] += outputTokens;
+
+        // 5. Structure the description
+        const structuredDesc = await this._structureDesc(description);
+        
+        // Add GitHub commit link at the end of the structured description
+        const finalDesc = structuredDesc + `\n\n<b>GitHub Commit:</b> <a href="${repoUrl}/commit/${shortHash}" target="_blank">${shortHash}</a>`;
+
+        // 6. Update the ticket
+        const pat = await this._getPatToken();
+        if (!pat) throw new Error('Missing AZURE_PAT');
+
+        const client = new AzureDevOpsClient(organization, project, pat);
+        await client.updateWorkItem(workItemId, title, finalDesc);
+
+        // 7. Log interaction
+        await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
+        this._post(`✅ Updated ticket <b>#${workItemId}</b> with commit ${shortHash}: "${title}"`);
+
+      } catch (gitError) {
+        this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
+        if (gitError.message.includes('No commit information found')) {
+          throw new Error('No commits found in this repository. Please make at least one commit first.');
+        } else if (gitError.message.includes('unknown revision')) {
+          throw new Error(`Commit ID "${commitId}" not found. Please provide a valid commit ID.`);
+        } else {
+          throw new Error(`Git error: ${gitError.message}`);
+        }
+      }
+    } catch (error) {
+      const errorMessage = `❌ Error updating ticket with commit: ${error.message}`;
       this._post(errorMessage);
       await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     }

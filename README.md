@@ -111,6 +111,11 @@ You can interact with TeamsBot using natural language or the following commands:
   _Example:_  
   `#1234 @update title 'Improve UI' description 'Redesign the dashboard for better usability.'`
 
+- `#<id> @update_with_commit <commit_id>`  
+  Update a ticket with information from a specific git commit. The bot will analyze the commit message and changes to update the ticket's title and description.  
+  _Example:_  
+  `#1234 @update_with_commit abc123`
+
 ### Board and Sprint Management
 
 - `@board_summary`  
