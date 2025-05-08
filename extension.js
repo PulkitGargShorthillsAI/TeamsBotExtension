@@ -706,18 +706,31 @@ class ChatViewProvider {
   async _makeTicket(title, htmlDesc, organization, project, ticketType = null) {
     let email = null;
     try {
+      console.log('Starting _makeTicket with:', { organization, project, ticketType });
       const org = organization, proj = project, pat = await this._getPatToken();
-      if (!org || !proj || !pat) throw new Error('Missing ORG/AZURE_PROJECT/AZURE_PAT');
+      console.log('PAT token retrieved:', pat ? 'Yes' : 'No');
+      
+      if (!org || !proj || !pat) {
+        console.error('Missing required parameters:', { org, proj, pat: pat ? 'Present' : 'Missing' });
+        throw new Error('Missing ORG/AZURE_PROJECT/AZURE_PAT');
+      }
+      
       email = await this._getEmail();
+      console.log('User email:', email);
 
       if(email === null) {
+        console.error('Email check failed - user not authorized');
         this._post(`❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`);
         return;
       }
 
       // Get the current iteration
       const client = new AzureDevOpsClient(org, proj, pat);
+      console.log('AzureDevOpsClient created');
+
+      // Get the current iteration
       const iterations = await client.getIterations();
+      console.log('Iterations retrieved successfully:', iterations.length);
       const currentIteration = iterations[0]; // Get the current iteration
 
       // Set due date to 12:30 AM of next day
@@ -729,6 +742,7 @@ class ChatViewProvider {
       // Generate description based on ticket type
       let finalDescription = htmlDesc;
       if (ticketType) {
+        console.log('Generating type-specific description for:', ticketType);
         finalDescription = await this._generateTypeSpecificDescription(title, htmlDesc, ticketType);
       }
 
@@ -738,8 +752,11 @@ class ChatViewProvider {
         { op: 'add', path: '/fields/System.AssignedTo', value: email },
         { op: 'add', path: '/fields/Microsoft.VSTS.Scheduling.OriginalEstimate', value: process.env.DEFAULT_EFFORT || 4 },
         { op: 'add', path: '/fields/Microsoft.VSTS.Common.Priority', value: process.env.DEFAULT_PRIORITY || 1 },
-        // { op: 'add', path: '/fields/Microsoft.VSTS.Common.Activity', value: process.env.DEFAULT_ACTIVITY || this._getWorkItemType(ticketType) || 'Development' },
-        { op: 'add', path: '/fields/Microsoft.VSTS.Scheduling.DueDate', value: dueDate }
+        { op: 'add', path: '/fields/Microsoft.VSTS.Scheduling.DueDate', value: dueDate },
+        // Add required custom fields
+        { op: 'add', path: '/fields/Custom.Planned', value: 'Planned' },
+        { op: 'add', path: '/fields/Custom.EffortsHours', value: process.env.DEFAULT_EFFORT || 4 },
+        { op: 'add', path: '/fields/Custom.TicketType', value: this._getWorkItemType(ticketType) || 'Coding' || 'Development' }
       ];
 
       // Add ticket type if specified
@@ -763,11 +780,15 @@ class ChatViewProvider {
         this._post(`⚠️ No active iteration found for the current date. Ticket will be created without an iteration.`);
       }
 
+      console.log('Attempting to create work item with patch:', JSON.stringify(patch, null, 2));
       const wi = await client.createWorkItem('Task', patch);
+      console.log('Work item created successfully:', wi.id);
+      
       this._post(`✅ Created <b>#${wi.id}</b> "${title}"<br>${finalDescription}<br>Due date set to today at 7 PM.`);
 
       await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     } catch (e) {
+      console.error('Error in _makeTicket:', e);
       this._post(`❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`);
       await this._logInteraction(email || 'unknown', this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     }
