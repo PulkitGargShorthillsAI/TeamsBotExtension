@@ -3,7 +3,7 @@
   "displayName": "TeamsBot",
   "publisher": "Teamsbot1",
   "description": "A VS Code sidebar chatbot that integrates with Google Gemini and Azure DevOps",
-  "version": "4.0.0",
+  "version": "5.0.0",
   "engines": {
     "vscode": "^1.99.0"
   },
