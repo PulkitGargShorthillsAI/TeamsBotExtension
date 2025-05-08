@@ -80,8 +80,11 @@ You can interact with TeamsBot using natural language or the following commands:
 
 ### Ticket Management
 
-- `@create_ticket <title> description '<description>'`  
-  Create a new ticket with a title and description.  
+- `@create_ticket <title> [type <ticket_type>] [description 'description text']`  
+  Create a new ticket with the given title, optional type, and optional description.  
+  - Supported ticket types: design, implementation, unit_test, integration_test  
+  - Each type follows a specific template for the ticket description  
+  - If no type is specified, uses the standard template  
   _Example:_  
   `@create_ticket Fix login bug description 'Users cannot log in with Google accounts.'`
 

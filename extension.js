@@ -243,16 +243,18 @@ class ChatViewProvider {
           }
         }
         else if (command.startsWith('@create_ticket')) {
-          const match = command.match(/^@create_ticket\s+(.+?)(?:\s+description\s+'(.+)')?$/i);
+          const match = command.match(/^@create_ticket\s+(.+?)(?:\s+type\s+(\w+))?(?:\s+description\s+'(.+)')?$/i);
           if (match) {
             const title = match[1].trim();
-            const description = match[2] ? match[2].trim() : null;
+            const ticketType = match[2] ? match[2].trim().toLowerCase() : null;
+            const description = match[3] ? match[3].trim() : null;
             this.pendingTitle = title;
+            this.pendingType = ticketType;
             if (description) {
               const structured = await this._structureDesc(description);
-              await this._makeTicket(title, structured, organization, project);
+              await this._makeTicket(title, structured, organization, project, ticketType);
             } else {
-              const message = `Got it! Title: <b>${title}</b><br>
+              const message = `Got it! Title: <b>${title}</b>${ticketType ? `\nType: <b>${ticketType}</b>` : ''}<br>
                 Please describe what needs to be done in simple terms, or type "skip", "leave it blank", or "leave blank" to proceed without a description.`;
               this._post(message);
               await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
@@ -358,7 +360,7 @@ class ChatViewProvider {
       - @help → Provide help information.
       - @view_tickets → View all assigned tickets.
       - @view_tickets <id> → View a specific ticket by ID.
-      - @create_ticket <title> description '<description>' → Create a new ticket.
+      - @create_ticket <title> [type <ticket_type>] [description '<description>'] → Create a new ticket with optional type and description.
       - @create_ticket_from_last_commit → Create a ticket based on the last git commit in the workspace.
       - @create_ticket_from_commit <commit_id> → Create a ticket based on a specific git commit ID.
       - #<id> @comment <comment text> → Add a comment to a ticket.
@@ -378,6 +380,13 @@ class ChatViewProvider {
       Strict Rules:
       - If multiple commands are mentioned in a single message, split them into separate outputs in order.
       - Always output a JSON array of only command strings. No explanation or extra text.
+      - For ticket creation:
+        - Use @create_ticket <title> for basic ticket creation
+        - Use @create_ticket <title> type <ticket_type> for type-specific tickets
+        - Supported ticket types: design, implementation, unit_test, integration_test
+        - Each type follows a specific template for the ticket description
+        - If no type is specified, uses the standard template
+        - Description is optional and should be enclosed in single quotes
       - For overdue tickets:
         - Use @overdue_tickets for general overdue ticket queries
         - Use @overdue_tickets of <name> when specifically asking about someone's overdue tickets
@@ -406,6 +415,21 @@ class ChatViewProvider {
       -If you are not confident that the message matches one of the defined commands, return an empty JSON array. Do not guess or hallucinate commands.
 
       Examples:
+
+      User: "Create a design ticket for new authentication system"
+      Output: ["@create_ticket New Authentication System type design"]
+
+      User: "Create an implementation ticket for user registration"
+      Output: ["@create_ticket User Registration Implementation type implementation"]
+
+      User: "Create a unit test ticket for auth service"
+      Output: ["@create_ticket Auth Service Unit Tests type unit_test"]
+
+      User: "Create an integration test ticket for user registration flow"
+      Output: ["@create_ticket User Registration Integration Tests type integration_test"]
+
+      User: "Create a design ticket for new authentication system with description 'Implement OAuth2 with Google and GitHub'"
+      Output: ["@create_ticket New Authentication System type design description 'Implement OAuth2 with Google and GitHub'"]
 
       User: "Show me all overdue tickets"
       Output: ["@overdue_tickets"]
@@ -501,6 +525,10 @@ class ChatViewProvider {
       - Parse the message following the above rules.
       - If the message implies multiple commands, output all commands separately in sequence.
       - Always generate a formal title and description if user message is casual.
+      - For ticket creation:
+        - Include type parameter if specified or implied
+        - Use appropriate ticket type based on context
+        - Enclose description in single quotes if provided
       - For date-based queries:
         - ALWAYS preserve the exact date from the user's message
         - NEVER use today's date unless explicitly mentioned
@@ -675,11 +703,12 @@ class ChatViewProvider {
     return result.candidates[0].content.parts[0].text;
   }
 
-  async _makeTicket(title, htmlDesc, organization, project) {
+  async _makeTicket(title, htmlDesc, organization, project, ticketType = null) {
+    let email = null;
     try {
       const org = organization, proj = project, pat = await this._getPatToken();
       if (!org || !proj || !pat) throw new Error('Missing ORG/AZURE_PROJECT/AZURE_PAT');
-      const email = await this._getEmail();
+      email = await this._getEmail();
 
       if(email === null) {
         this._post(`❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`);
@@ -697,15 +726,30 @@ class ChatViewProvider {
       tomorrow.setHours(0, 30, 0, 0); // Set to 12:30 AM
       const dueDate = tomorrow.toISOString();
 
+      // Generate description based on ticket type
+      let finalDescription = htmlDesc;
+      if (ticketType) {
+        finalDescription = await this._generateTypeSpecificDescription(title, htmlDesc, ticketType);
+      }
+
       const patch = [
         { op: 'add', path: '/fields/System.Title', value: title },
-        { op: 'add', path: '/fields/System.Description', value: htmlDesc },
+        { op: 'add', path: '/fields/System.Description', value: finalDescription },
         { op: 'add', path: '/fields/System.AssignedTo', value: email },
         { op: 'add', path: '/fields/Microsoft.VSTS.Scheduling.OriginalEstimate', value: process.env.DEFAULT_EFFORT || 4 },
         { op: 'add', path: '/fields/Microsoft.VSTS.Common.Priority', value: process.env.DEFAULT_PRIORITY || 1 },
-        { op: 'add', path: '/fields/Microsoft.VSTS.Common.Activity', value: process.env.DEFAULT_ACTIVITY || 'Development' },
+        // { op: 'add', path: '/fields/Microsoft.VSTS.Common.Activity', value: process.env.DEFAULT_ACTIVITY || this._getWorkItemType(ticketType) || 'Development' },
         { op: 'add', path: '/fields/Microsoft.VSTS.Scheduling.DueDate', value: dueDate }
       ];
+
+      // Add ticket type if specified
+      if (ticketType) {
+        patch.push({ 
+          op: 'add', 
+          path: '/fields/System.WorkItemType', 
+          value: this._getWorkItemType(ticketType)
+        });
+      }
 
       // Add iteration path if available
       if (currentIteration) {
@@ -720,13 +764,164 @@ class ChatViewProvider {
       }
 
       const wi = await client.createWorkItem('Task', patch);
-      this._post(`✅ Created <b>#${wi.id}</b> "${title}"<br>${htmlDesc}<br>Due date set to today at 7 PM.`);
+      this._post(`✅ Created <b>#${wi.id}</b> "${title}"<br>${finalDescription}<br>Due date set to today at 7 PM.`);
 
-      this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
+      await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     } catch (e) {
       this._post(`❌ Error: You are not authorized to create tickets in this project. Please check your Azure DevOps permissions.`);
-      this._logInteraction(email || 'unknown', this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
+      await this._logInteraction(email || 'unknown', this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
     }
+  }
+
+  _getWorkItemType(ticketType) {
+    const typeMap = {
+      'design': 'Design',
+      'implementation': 'Coding/Implementation',
+      'unit_test': 'Testing/QA',
+      'integration_test': 'Testing/QA'
+    };
+    return typeMap[ticketType.toLowerCase()] || 'Task';
+  }
+
+  async _generateTypeSpecificDescription(title, originalDesc, ticketType) {
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    
+    let prompt = '';
+    switch (ticketType.toLowerCase()) {
+      case 'design':
+        prompt = `
+      You are an assistant that helps write structured Azure DevOps tickets in HTML format.
+
+      Based on:
+        Title: ${title}
+        Description: ${originalDesc}
+
+      Generate a response in formatted HTML (without wrapping it in \`\`\`html or any code block fences). Use the following structure:
+
+      <b>Objective:</b><br>
+      (Define the objective of the feature or component to be designed)
+
+      <br><br><b>Description:</b><br>
+      <ul>
+        <li>High-level overview of proposed architecture and data flow</li>
+        <li>Error handling, logging, and monitoring mechanisms</li>
+        <li>Key assumptions, known constraints, and limitations</li>
+      </ul>
+
+      <br><b>Performance And Scale:</b><br>
+      (Mention the scale it would handle)
+
+      <br><br><b>High Level Test Cases:</b><br>
+      <ul>
+        <li>List of all use cases including edge and corner cases</li>
+      </ul>
+
+      <br><b>Dependencies:</b><br>
+      (List all dependencies)
+
+      <br><br><b>Impacted Area:</b><br>
+      (Mention the impacted modules/components)
+
+      <br><br><b>Conclusion:</b><br>
+      Recommend proceeding to the implementation phase post-approval.
+      `;
+      break;
+
+      case 'implementation':
+        prompt = `
+        You are an assistant that helps write structured Azure DevOps tickets in HTML format.
+
+        Based on:
+        Title: ${title}
+        Description: ${originalDesc}
+
+        Generate a response in formatted HTML (without wrapping it in \`\`\`html or any code block fences). Use the following structure:
+
+        <b>Objective:</b><br>
+        (Outline the modules/components being developed)
+
+        <br><br><b>Description:</b><br>
+        <ul>
+          <li>Design Pattern followed</li>
+          <li>Reference to Loop design document or mention of BugFix changes</li>
+        </ul>
+        `;
+        break;
+
+      case 'unit_test':
+        prompt = `
+        You are an assistant that helps write structured Azure DevOps tickets in HTML format.
+
+        Based on:
+        Title: ${title}
+        Description: ${originalDesc}
+
+        Generate a response in formatted HTML (without wrapping it in \`\`\`html or any code block fences). Use the following structure:
+
+        <b>Objective:</b><br>
+        (Purpose of unit testing for the developed modules/features/components)
+
+        <br><br><b>Description:</b><br>
+        <ul>
+          <li>Testing plan and strategy (tools/frameworks)</li>
+          <li>Scope of unit testing – list components/modules covered</li>
+          <li>Coverage of edge cases, boundary conditions, and negative paths</li>
+        </ul>
+
+        <br><b>Conclusion:</b><br>
+        <ul>
+          <li>Uncovered areas with action points</li>
+          <li>Include screenshots of execution status and code coverage</li>
+        </ul>
+        `;
+        break;
+
+      case 'integration_test':
+        prompt = `
+        You are an assistant that helps write structured Azure DevOps tickets in HTML format.
+
+
+        Based on:
+        Title: ${title}
+        Description: ${originalDesc}
+
+        Generate a response in formatted HTML (without wrapping it in \`\`\`html or any code block fences). Use the following structure:
+
+        <b>Objective:</b><br>
+        (List of Sprint features being verified)
+
+        <br><br><b>Description:</b><br>
+        <ul>
+          <li>Test environment overview</li>
+          <li>Scope of integration testing</li>
+        </ul>
+
+        <br><b>Test Cases:</b><br>
+        (Reference to test case document: Test_Case_Document_Template.docx)
+
+        <br><br><b>Conclusion:</b><br>
+        Provide screenshot of test execution status from the document.
+
+        `;
+        break;
+
+
+      default:
+        return originalDesc;
+    }
+
+    const response = await model.generateContent(prompt);
+    const result = response.response;
+    
+    // Get token counts from the usageMetadata
+    const inputTokens = response.response.usageMetadata?.promptTokenCount || 0;
+    const outputTokens = response.response.usageMetadata?.candidatesTokenCount || 0;
+
+    // Store token counts for logging
+    this.lastInteractionTokens['input'] += inputTokens;
+    this.lastInteractionTokens['output'] += outputTokens;
+
+    return result.candidates[0].content.parts[0].text;
   }
 
   async _showTickets(organization, project, workItemId = null) {
