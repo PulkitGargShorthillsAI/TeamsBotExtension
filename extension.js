@@ -251,11 +251,9 @@ class ChatViewProvider {
             this.pendingTitle = title;
             this.pendingType = ticketType;
             if (description) {
-              const structured = await this._structureDesc(description);
-              await this._makeTicket(title, structured, organization, project, ticketType);
+              await this._makeTicket(title, description, organization, project, ticketType);
             } else {
-              const message = `Got it! Title: <b>${title}</b>${ticketType ? `\nType: <b>${ticketType}</b>` : ''}<br>
-                Please describe what needs to be done in simple terms, or type "skip", "leave it blank", or "leave blank" to proceed without a description.`;
+              const message = `Could not create ticket. Please try again.`;
               this._post(message);
               await this._logInteraction(email, this.lastInteractionTokens?.input || 0, this.lastInteractionTokens?.output || 0);
             }
@@ -387,6 +385,7 @@ class ChatViewProvider {
         - Each type follows a specific template for the ticket description
         - If no type is specified, uses the standard template
         - Description is optional and should be enclosed in single quotes
+        - CRITICAL: If the ticket type cannot be confidently classified, default to "implementation" type
       - For overdue tickets:
         - Use @overdue_tickets for general overdue ticket queries
         - Use @overdue_tickets of <name> when specifically asking about someone's overdue tickets
@@ -739,11 +738,19 @@ class ChatViewProvider {
       tomorrow.setHours(0, 30, 0, 0); // Set to 12:30 AM
       const dueDate = tomorrow.toISOString();
 
+      // Default to "implementation" if ticketType is null or not among predefined types
+      const validTypes = ['design', 'implementation', 'unit_test', 'integration_test'];
+      if (!ticketType || !validTypes.includes(ticketType.toLowerCase())) {
+        console.log('Invalid or missing ticket type, defaulting to implementation');
+        ticketType = 'implementation';
+      }
+
       // Generate description based on ticket type
       let finalDescription = htmlDesc;
       if (ticketType) {
         console.log('Generating type-specific description for:', ticketType);
         finalDescription = await this._generateTypeSpecificDescription(title, htmlDesc, ticketType);
+        console.log('Type-specific description generated:', finalDescription);
       }
 
       const patch = [
