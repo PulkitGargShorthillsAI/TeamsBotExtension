@@ -7,6 +7,13 @@ const AzureDevOpsClient = require('./azureDevOpsClient');
 const { exec } = require('child_process');
 const util = require('util');
 const execAsync = util.promisify(exec);
+const { getClassifierPrompt } = require('./classifier_prompt');
+const { 
+  getStructureDescPrompt, 
+  getTypeSpecificPrompt, 
+  getCommitAnalysisPrompt, 
+  getEpicSummaryPrompt 
+} = require('./template');
 
 let fetch; // Will be dynamically imported
 
@@ -351,194 +358,7 @@ class ChatViewProvider {
   async _getCommandsFromGemini(userMessage) {
     try {
       const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-      const prompt = `
-      You are an intelligent command parser for a task management system. Your role is to map user messages into strict predefined commands.
-
-      Available Commands:
-      - @help → Provide help information.
-      - @view_tickets → View all assigned tickets.
-      - @view_tickets <id> → View a specific ticket by ID.
-      - @create_ticket <title> [type <ticket_type>] [description '<description>'] → Create a new ticket with optional type and description.
-      - @create_ticket_from_last_commit → Create a ticket based on the last git commit in the workspace.
-      - @create_ticket_from_commit <commit_id> → Create a ticket based on a specific git commit ID.
-      - #<id> @comment <comment text> → Add a comment to a ticket.
-      - #<id> @update title '<title>' description '<description>' → Update a ticket.
-      - #<id> @update_with_commit <commit_id> → Update a ticket with information from a specific git commit.
-      - @board_summary → Show summary of all tickets on the board.
-      - @sprint_summary → Show summary of tickets by sprint.
-      - @epic_summary <iteration_path> → Show summary of epics and their completed tasks for a specific iteration.
-      - @overdue_tickets → Show tickets that are past their due date but still active or new.
-      - @overdue_tickets of <name> → Show overdue tickets for a specific person.
-      - @overdue_tickets my → Show your own overdue tickets.
-      - @overdue_tickets as of <date> → Show overdue tickets as of a specific date (e.g., "1st May" or "20 Jan" or "3 May 2024").
-      - @overdue_tickets of <name> as of <date> → Show overdue tickets for a specific person as of a specific date.
-      - @query_tickets <query> → Query tickets based on name or sprint (for non-overdue tickets).
-      - @help → Get information about available commands.
-
-      Strict Rules:
-      - If multiple commands are mentioned in a single message, split them into separate outputs in order.
-      - Always output a JSON array of only command strings. No explanation or extra text.
-      - For ticket creation:
-        - Use @create_ticket <title> for basic ticket creation
-        - Use @create_ticket <title> type <ticket_type> for type-specific tickets
-        - Supported ticket types: design, implementation, unit_test, integration_test
-        - Each type follows a specific template for the ticket description
-        - If no type is specified, uses the standard template
-        - Description is optional and should be enclosed in single quotes
-        - CRITICAL: If the ticket type cannot be confidently classified, default to "implementation" type
-      - For overdue tickets:
-        - Use @overdue_tickets for general overdue ticket queries
-        - Use @overdue_tickets of <name> when specifically asking about someone's overdue tickets
-        - Use @overdue_tickets my when asking about own overdue tickets
-        - Use @overdue_tickets as of <date> for date-based queries
-        - Use @overdue_tickets of <name> as of <date> for combined person and date queries
-        - CRITICAL: For date-based queries:
-          - ALWAYS include the exact date from the user's message
-          - NEVER use today's date unless the user explicitly says "today"
-          - Preserve the exact date format (e.g., "3rd May", "1st Jan", "20th March")
-          - If the user says "as of 3rd May", use exactly that date, not today
-          - If the user says "as of today", use today's date
-        - The date in the output must match exactly what the user specified
-      - For regular ticket queries (non-overdue):
-        - Use @query_tickets for general ticket queries about assignments or sprints
-        - Do NOT use @query_tickets for overdue ticket queries
-      - For ticket updates with commits:
-        - Use #<id> @update_with_commit <commit_id> when updating a ticket with commit information
-        - The commit ID must be a valid git commit hash
-        - The ticket ID must be a valid number
-      - If the user gives a casual or layman description for creating or updating a ticket:
-        - Create a short, professional, formal title summarizing the task.
-        - Write a clear, well-phrased formal description based on the user's input.
-        - Avoid copying informal or casual language directly.
-      - If details are missing, make reasonable formal assumptions based on the context.
-      -If you are not confident that the message matches one of the defined commands, return an empty JSON array. Do not guess or hallucinate commands.
-
-      Examples:
-
-      User: "Create a design ticket for new authentication system"
-      Output: ["@create_ticket New Authentication System type design"]
-
-      User: "Create an implementation ticket for user registration"
-      Output: ["@create_ticket User Registration Implementation type implementation"]
-
-      User: "Create a unit test ticket for auth service"
-      Output: ["@create_ticket Auth Service Unit Tests type unit_test"]
-
-      User: "Create an integration test ticket for user registration flow"
-      Output: ["@create_ticket User Registration Integration Tests type integration_test"]
-
-      User: "Create a design ticket for new authentication system with description 'Implement OAuth2 with Google and GitHub'"
-      Output: ["@create_ticket New Authentication System type design description 'Implement OAuth2 with Google and GitHub'"]
-
-      User: "Show me all overdue tickets"
-      Output: ["@overdue_tickets"]
-
-      User: "Show me Pulkit's overdue tickets"
-      Output: ["@overdue_tickets of Pulkit"]
-
-      User: "Show my overdue tickets"
-      Output: ["@overdue_tickets my"]
-
-      User: "Show overdue tickets as of 1st May"
-      Output: ["@overdue_tickets as of 1st May"]
-
-      User: "Show overdue tickets as of 20 Jan"
-      Output: ["@overdue_tickets as of 20 Jan"]
-
-      User: "Show overdue tickets as of 3rd May 2024"
-      Output: ["@overdue_tickets as of 3rd May 2024"]
-
-      User: "Show overdue tickets as of today"
-      Output: ["@overdue_tickets as of today"]
-
-      User: "Show Pulkit's overdue tickets as of 3rd May"
-      Output: ["@overdue_tickets of Pulkit as of 3rd May"]
-
-      User: "Show my overdue tickets as of 20th Jan"
-      Output: ["@overdue_tickets my as of 20th Jan"]
-
-      User: "Show me all tickets of John"
-      Output: ["@query_tickets show me all tickets of John"]
-
-      User: "Show me tickets of Sarah in sprint 2"
-      Output: ["@query_tickets show me tickets of Sarah in sprint 2"]
-
-      User: "Show me all tickets in sprint 3"
-      Output: ["@query_tickets show me all tickets in sprint 3"]
-
-      User: "Show my tickets"
-      Output: ["@view_tickets"]
-
-      User: "Show 1345"
-      Output: ["@view_tickets 1345"]
-
-      User: "Create a ticket, I built a chatbot using Gemini and Pinecone, tested it fully."
-      Output: ["@create_ticket Chatbot Development Using Gemini and Pinecone description 'Developed a chatbot leveraging Gemini LLM and Pinecone as a vector store. Completed unit testing to ensure functionality.'"]
-
-      User: "Update ticket 1348, stored PAT token locally instead of MySQL"
-      Output: ["#1348 @update title 'Store PAT Token Locally' description 'Implemented functionality to securely store the PAT token locally within the VS Code extension, removing dependency on a remote MySQL server.'"]
-
-      User: "Update ticket 1234 with commit abc123"
-      Output: ["#1234 @update_with_commit abc123"]
-
-      User: "Update ticket 5678 with the changes from commit def456"
-      Output: ["#5678 @update_with_commit def456"]
-
-      User: "Update ticket 9012 with commit ghi789 and then show it to me"
-      Output: ["#9012 @update_with_commit ghi789", "@view_tickets 9012"]
-
-      User: "Comment on ticket 1234 that this needs urgent attention and then show it to me"
-      Output: ["#1234 @comment this needs urgent attention", "@view_tickets 1234"]
-
-      User: "Create a ticket for migrating database to MongoDB and show me my tickets"
-      Output: ["@create_ticket Database Migration to MongoDB description \"Migrated existing database infrastructure to MongoDB to enhance scalability and flexibility.\"", "@view_tickets"]
-
-      User: "Add a comment to ticket 5678 saying this issue is critical"
-      Output: ["#5678 @comment this issue is critical"]
-
-      User: "Create a ticket from my last commit"
-      Output: ["@create_ticket_from_last_commit"]
-
-      User: "Create a ticket from commit abc123"
-      Output: ["@create_ticket_from_commit abc123"]
-
-      User: "what is a monkey"
-      Output: []
-
-      User: "sbdjnreoi"
-      Output: []
-
-      User: "pizza toppings"
-      Output: []
-      
-      User: "how are you?"
-      Output: []
-
-      User: "Show epic summary for Sprint 1"
-      Output: ["@epic_summary Sprint 1"]
-
-      User message:
-      "${userMessage}"
-
-      Instructions:
-      - Parse the message following the above rules.
-      - If the message implies multiple commands, output all commands separately in sequence.
-      - Always generate a formal title and description if user message is casual.
-      - For ticket creation:
-        - Include type parameter if specified or implied
-        - Use appropriate ticket type based on context
-        - Enclose description in single quotes if provided
-      - For date-based queries:
-        - ALWAYS preserve the exact date from the user's message
-        - NEVER use today's date unless explicitly mentioned
-        - Keep ordinal numbers (1st, 2nd, 3rd, etc.) in the date
-        - The date in the output must match exactly what the user specified
-      - For ticket updates with commits:
-        - Use the exact format #<id> @update_with_commit <commit_id>
-        - Preserve the exact commit ID from the user's message
-        - Ensure the ticket ID is a valid number
-      - Output only a clean JSON array of valid commands.
-      `;
+      const prompt = getClassifierPrompt(userMessage);
 
       const response = await model.generateContent(prompt);
       console.log('Full Gemini Response:', JSON.stringify(response, null, 2));
@@ -659,33 +479,11 @@ class ChatViewProvider {
 
   async _structureDesc(layman) {
     const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-    const prompt = `
-			You are an assistant that helps write structured Azure DevOps tickets.
-
-			Given that the user says: "${layman}"
-
-			Generate a response in formatted HTML (without wrapping it in \`\`\`html or any code block fences). Use the following structure:
-
-			<b>Aim:</b>
-			(a short, one-line summary of the task)
-
-			<br><br><b>Acceptance Criteria:</b><br>
-			<ul>
-			<li>List of concrete requirements that define when this ticket is complete</li>
-			</ul>
-
-			<br><b>Outcomes:</b><br>
-			<ul>
-			<li>What changes or results will be produced once this ticket is done</li>
-			</ul>
-		`;
+    const prompt = getStructureDescPrompt(layman);
 
     const response = await model.generateContent(prompt);
     console.log('Structure Desc Response:', JSON.stringify(response, null, 2));
 
-
-
-    
     const result = response.response;
     console.log('Structure Desc Result:', JSON.stringify(result, null, 2));
     
@@ -694,6 +492,24 @@ class ChatViewProvider {
     const outputTokens = response.response.usageMetadata?.candidatesTokenCount || 0;
 
     console.log('Token Counts:', { inputTokens, outputTokens });
+
+    // Store token counts for logging
+    this.lastInteractionTokens['input'] += inputTokens;
+    this.lastInteractionTokens['output'] += outputTokens;
+
+    return result.candidates[0].content.parts[0].text;
+  }
+
+  async _generateTypeSpecificDescription(title, originalDesc, ticketType) {
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const prompt = getTypeSpecificPrompt(title, originalDesc, ticketType);
+
+    const response = await model.generateContent(prompt);
+    const result = response.response;
+    
+    // Get token counts from the usageMetadata
+    const inputTokens = response.response.usageMetadata?.promptTokenCount || 0;
+    const outputTokens = response.response.usageMetadata?.candidatesTokenCount || 0;
 
     // Store token counts for logging
     this.lastInteractionTokens['input'] += inputTokens;
@@ -809,147 +625,6 @@ class ChatViewProvider {
       'integration_test': 'Testing/QA'
     };
     return typeMap[ticketType.toLowerCase()] || 'Task';
-  }
-
-  async _generateTypeSpecificDescription(title, originalDesc, ticketType) {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-    
-    let prompt = '';
-    switch (ticketType.toLowerCase()) {
-      case 'design':
-        prompt = `
-      You are an assistant that helps write structured Azure DevOps tickets in HTML format.
-
-      Based on:
-        Title: ${title}
-        Description: ${originalDesc}
-
-      Generate a response in formatted HTML (without wrapping it in \`\`\`html or any code block fences). Use the following structure:
-
-      <b>Objective:</b><br>
-      (Define the objective of the feature or component to be designed)
-
-      <br><br><b>Description:</b><br>
-      <ul>
-        <li>High-level overview of proposed architecture and data flow</li>
-        <li>Error handling, logging, and monitoring mechanisms</li>
-        <li>Key assumptions, known constraints, and limitations</li>
-      </ul>
-
-      <br><b>Performance And Scale:</b><br>
-      (Mention the scale it would handle)
-
-      <br><br><b>High Level Test Cases:</b><br>
-      <ul>
-        <li>List of all use cases including edge and corner cases</li>
-      </ul>
-
-      <br><b>Dependencies:</b><br>
-      (List all dependencies)
-
-      <br><br><b>Impacted Area:</b><br>
-      (Mention the impacted modules/components)
-
-      <br><br><b>Conclusion:</b><br>
-      Recommend proceeding to the implementation phase post-approval.
-      `;
-      break;
-
-      case 'implementation':
-        prompt = `
-        You are an assistant that helps write structured Azure DevOps tickets in HTML format.
-
-        Based on:
-        Title: ${title}
-        Description: ${originalDesc}
-
-        Generate a response in formatted HTML (without wrapping it in \`\`\`html or any code block fences). Use the following structure:
-
-        <b>Objective:</b><br>
-        (Outline the modules/components being developed)
-
-        <br><br><b>Description:</b><br>
-        <ul>
-          <li>Design Pattern followed</li>
-          <li>Reference to Loop design document or mention of BugFix changes</li>
-        </ul>
-        `;
-        break;
-
-      case 'unit_test':
-        prompt = `
-        You are an assistant that helps write structured Azure DevOps tickets in HTML format.
-
-        Based on:
-        Title: ${title}
-        Description: ${originalDesc}
-
-        Generate a response in formatted HTML (without wrapping it in \`\`\`html or any code block fences). Use the following structure:
-
-        <b>Objective:</b><br>
-        (Purpose of unit testing for the developed modules/features/components)
-
-        <br><br><b>Description:</b><br>
-        <ul>
-          <li>Testing plan and strategy (tools/frameworks)</li>
-          <li>Scope of unit testing – list components/modules covered</li>
-          <li>Coverage of edge cases, boundary conditions, and negative paths</li>
-        </ul>
-
-        <br><b>Conclusion:</b><br>
-        <ul>
-          <li>Uncovered areas with action points</li>
-          <li>Include screenshots of execution status and code coverage</li>
-        </ul>
-        `;
-        break;
-
-      case 'integration_test':
-        prompt = `
-        You are an assistant that helps write structured Azure DevOps tickets in HTML format.
-
-
-        Based on:
-        Title: ${title}
-        Description: ${originalDesc}
-
-        Generate a response in formatted HTML (without wrapping it in \`\`\`html or any code block fences). Use the following structure:
-
-        <b>Objective:</b><br>
-        (List of Sprint features being verified)
-
-        <br><br><b>Description:</b><br>
-        <ul>
-          <li>Test environment overview</li>
-          <li>Scope of integration testing</li>
-        </ul>
-
-        <br><b>Test Cases:</b><br>
-        (Reference to test case document: Test_Case_Document_Template.docx)
-
-        <br><br><b>Conclusion:</b><br>
-        Provide screenshot of test execution status from the document.
-
-        `;
-        break;
-
-
-      default:
-        return originalDesc;
-    }
-
-    const response = await model.generateContent(prompt);
-    const result = response.response;
-    
-    // Get token counts from the usageMetadata
-    const inputTokens = response.response.usageMetadata?.promptTokenCount || 0;
-    const outputTokens = response.response.usageMetadata?.candidatesTokenCount || 0;
-
-    // Store token counts for logging
-    this.lastInteractionTokens['input'] += inputTokens;
-    this.lastInteractionTokens['output'] += outputTokens;
-
-    return result.candidates[0].content.parts[0].text;
   }
 
   async _showTickets(organization, project, workItemId = null) {
@@ -2719,40 +2394,13 @@ Only return the JSON in this format:
         
         // 4. Use Gemini to generate title/description
         const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-        const prompt = `
-You are a senior software engineer helping a project manager create clear, outcome-driven Azure DevOps ticket titles and descriptions from Git commit data.
-
-Your job is to:
-- Understand the purpose behind the code changes
-- Capture what was **achieved** from a feature or task perspective
-- Write like a human who understands the business and engineering goals
-
-Use the following commit summary:
-${commitSummary}
-
-Generate a JSON with:
-1. "title": A short, formal title summarizing the main outcome or feature delivered (not just what was changed).
-2. "description": A detailed yet clear summary including:
-   - What functionality or requirement was achieved or fixed (project-facing summary)
-   - Why this change was necessary (brief rationale)
-   - A high-level overview of key file changes (not raw diffs, but what they accomplished)
-   - Any technical details relevant for QA, deployment, or PMs to understand
-   - (Optional) Mention of acceptance criteria if it can be inferred
-
-Only return the JSON in this format:
-{
-  "title": "<title>",
-  "description": "<description>"
-}
-`;
+        const prompt = getCommitAnalysisPrompt(commitSummary);
 
         const response = await model.generateContent(prompt);
         const result = response.response;
         const json = JSON.parse(this._removeJsonWrapper(result.candidates[0].content.parts[0].text));
         const title = json.title;
         const description = json.description;
-
-
 
         // Get token counts from the usageMetadata
         const inputTokens = response.response.usageMetadata?.promptTokenCount || 0;
@@ -2858,16 +2506,10 @@ Only return the JSON in this format:
         let remarks = 'No completed tasks to summarize.';
         if (doneTasks.length > 0) {
           const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-          const prompt = `
-            Write a business oriented 1 liner description in layment terms about what has been done in epic based on below tasks.
-            Use plain text only, no formatting or styling.
-            Completed tasks:
-            ${doneTasks.map(task => `- ${task.fields['System.Title']}`).join('\n')}
-          `;
+          const prompt = getEpicSummaryPrompt(doneTasks);
           const response = await model.generateContent(prompt);
           const result = response.response;
           remarks = result.candidates[0].content.parts[0].text;
-
 
           // Get token counts from the usageMetadata
           const inputTokens = response.response.usageMetadata?.promptTokenCount || 0;
@@ -2878,7 +2520,6 @@ Only return the JSON in this format:
           // Store token counts for logging
           this.lastInteractionTokens['input'] += inputTokens;
           this.lastInteractionTokens['output'] += outputTokens;
-
 
           console.log(this.lastInteractionTokens);
           
