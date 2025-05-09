@@ -2,7 +2,7 @@
 const vscode = require('vscode');
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '.env') });
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { createLLMModel } = require('./llm_models');
 const AzureDevOpsClient = require('./azureDevOpsClient');
 const { exec } = require('child_process');
 const util = require('util');
@@ -25,7 +25,8 @@ async function initializeFetch() {
   return fetch;
 }
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// Initialize the LLM model
+const llmModel = createLLMModel('gemini', process.env.GEMINI_API_KEY);
 
 function activate(context) {
   console.log('Teams Bot extension active');
@@ -357,13 +358,8 @@ class ChatViewProvider {
 
   async _getCommandsFromGemini(userMessage) {
     try {
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
       const prompt = getClassifierPrompt(userMessage);
-
-      const response = await model.generateContent(prompt);
-      console.log('Full Gemini Response:', JSON.stringify(response, null, 2));
-      
-      const result = response.response;
+      const result = await llmModel.generateContent(prompt);
       
       // Get token counts from the usageMetadata
       const inputTokens = result.usageMetadata?.promptTokenCount || 0;
@@ -404,7 +400,7 @@ class ChatViewProvider {
       const sprintSummary = this._generateSprintSummary(workItems);
 
       // Use Gemini to interpret the query and find relevant tickets
-      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+      const model = createLLMModel('gemini', process.env.GEMINI_API_KEY);
       const prompt = `
       You are a Ticket Query Processor.
 
@@ -478,18 +474,12 @@ class ChatViewProvider {
   }
 
   async _structureDesc(layman) {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
     const prompt = getStructureDescPrompt(layman);
-
-    const response = await model.generateContent(prompt);
-    console.log('Structure Desc Response:', JSON.stringify(response, null, 2));
-
-    const result = response.response;
-    console.log('Structure Desc Result:', JSON.stringify(result, null, 2));
+    const result = await llmModel.generateContent(prompt);
     
     // Get token counts from the usageMetadata
-    const inputTokens = response.response.usageMetadata?.promptTokenCount || 0;
-    const outputTokens = response.response.usageMetadata?.candidatesTokenCount || 0;
+    const inputTokens = result.usageMetadata?.promptTokenCount || 0;
+    const outputTokens = result.usageMetadata?.candidatesTokenCount || 0;
 
     console.log('Token Counts:', { inputTokens, outputTokens });
 
@@ -501,15 +491,12 @@ class ChatViewProvider {
   }
 
   async _generateTypeSpecificDescription(title, originalDesc, ticketType) {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
     const prompt = getTypeSpecificPrompt(title, originalDesc, ticketType);
-
-    const response = await model.generateContent(prompt);
-    const result = response.response;
+    const result = await llmModel.generateContent(prompt);
     
     // Get token counts from the usageMetadata
-    const inputTokens = response.response.usageMetadata?.promptTokenCount || 0;
-    const outputTokens = response.response.usageMetadata?.candidatesTokenCount || 0;
+    const inputTokens = result.usageMetadata?.promptTokenCount || 0;
+    const outputTokens = result.usageMetadata?.candidatesTokenCount || 0;
 
     // Store token counts for logging
     this.lastInteractionTokens['input'] += inputTokens;
@@ -1328,7 +1315,11 @@ class ChatViewProvider {
 
   async _getWorkItemHistory(organization,project,workItemId) {
     try {
-      const org = organization, proj = project, pat = process.env.AZURE_PAT;
+      const org = organization, proj = project, pat = await this._getPatToken();
+      if (!org || !proj || !pat) {
+        console.error('Missing required parameters:', { org, proj, pat: pat ? 'Present' : 'Missing' });
+        throw new Error('Missing ORG/AZURE_PROJECT/AZURE_PAT');
+      }
       const client = new AzureDevOpsClient(org, proj, pat);
       const updatesUrl = `${client.baseUrl}/wit/workitems/${workItemId}/updates?api-version=${client.apiVersion}`;
       const response = await fetch(updatesUrl, { headers: client._getAuthHeader() });
@@ -1577,7 +1568,7 @@ class ChatViewProvider {
         `;
 
         // 4. Use Gemini to generate title/description
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+        const model = createLLMModel('gemini', process.env.GEMINI_API_KEY);
         const prompt = `
 You are a senior software engineer helping a project manager create clear, outcome-driven Azure DevOps ticket titles and descriptions from Git commit data.
 
@@ -2392,19 +2383,16 @@ Only return the JSON in this format:
         console.log(fileChanges);
         console.log(detailedDiff);
         
-        // 4. Use Gemini to generate title/description
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+        // 4. Use LLM to generate title/description
         const prompt = getCommitAnalysisPrompt(commitSummary);
-
-        const response = await model.generateContent(prompt);
-        const result = response.response;
+        const result = await llmModel.generateContent(prompt);
         const json = JSON.parse(this._removeJsonWrapper(result.candidates[0].content.parts[0].text));
         const title = json.title;
         const description = json.description;
 
         // Get token counts from the usageMetadata
-        const inputTokens = response.response.usageMetadata?.promptTokenCount || 0;
-        const outputTokens = response.response.usageMetadata?.candidatesTokenCount || 0;
+        const inputTokens = result.usageMetadata?.promptTokenCount || 0;
+        const outputTokens = result.usageMetadata?.candidatesTokenCount || 0;
 
         console.log('Token Counts:', { inputTokens, outputTokens });
 
@@ -2505,24 +2493,19 @@ Only return the JSON in this format:
         // Get Gemini summary for done tasks
         let remarks = 'No completed tasks to summarize.';
         if (doneTasks.length > 0) {
-          const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
           const prompt = getEpicSummaryPrompt(doneTasks);
-          const response = await model.generateContent(prompt);
-          const result = response.response;
+          const result = await llmModel.generateContent(prompt);
           remarks = result.candidates[0].content.parts[0].text;
 
           // Get token counts from the usageMetadata
-          const inputTokens = response.response.usageMetadata?.promptTokenCount || 0;
-          const outputTokens = response.response.usageMetadata?.candidatesTokenCount || 0;
+          const inputTokens = result.usageMetadata?.promptTokenCount || 0;
+          const outputTokens = result.usageMetadata?.candidatesTokenCount || 0;
 
           console.log('Token Counts:', { inputTokens, outputTokens });
 
           // Store token counts for logging
           this.lastInteractionTokens['input'] += inputTokens;
           this.lastInteractionTokens['output'] += outputTokens;
-
-          console.log(this.lastInteractionTokens);
-          
         }
 
         epicSummaries.push({
