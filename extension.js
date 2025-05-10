@@ -26,7 +26,8 @@ async function initializeFetch() {
 }
 
 // Initialize the LLM model
-const llmModel = createLLMModel('gemini', process.env.GEMINI_API_KEY);
+// const llmModel = createLLMModel('gemini', process.env.GEMINI_API_KEY);
+const llmModel = createLLMModel('azure-openai', process.env.AZURE_OPENAI_API_KEY);
 
 function activate(context) {
   console.log('Teams Bot extension active');
@@ -373,10 +374,27 @@ class ChatViewProvider {
         output: outputTokens
       };
 
-      const commands = JSON.parse(this._removeJsonWrapper(result.candidates[0].content.parts[0].text));
+      // Handle both Azure OpenAI and Gemini response formats
+      let text;
+      if (result.candidates && result.candidates[0]?.content?.parts?.[0]?.text) {
+        // Gemini format
+        text = result.candidates[0].content.parts[0].text;
+      } else if (result.text) {
+        // Azure OpenAI format
+        text = result.text();
+      } else if (result.response?.text) {
+        // Alternative Azure OpenAI format
+        text = result.response.text();
+      } else {
+        console.error('Unexpected response format:', result);
+        throw new Error('Invalid response format from LLM model');
+      }
+
+      console.log('Extracted text:', text);
+      const commands = JSON.parse(this._removeJsonWrapper(text));
       return commands;
     } catch (error) {
-      console.error('Error fetching commands from GEMINI:', error);
+      console.error('Error fetching commands from LLM:', error);
       return null;
     }
   }
@@ -2072,11 +2090,31 @@ Only return the JSON in this format:
       }
 
       console.log('Logging interaction:', { email, inputTokens, outputTokens });
-      
 
-      // Convert token counts to integers
-      const inputTokensInt = parseInt(inputTokens) || 0;
-      const outputTokensInt = parseInt(outputTokens) || 0;
+      // Handle token counts from both models
+      let inputTokensInt = 0;
+      let outputTokensInt = 0;
+
+      // If tokens are in lastInteractionTokens (from Azure OpenAI)
+      if (this.lastInteractionTokens) {
+        // Handle Azure OpenAI token counts
+        if (this.lastInteractionTokens.usageMetadata) {
+          inputTokensInt = parseInt(this.lastInteractionTokens.usageMetadata.promptTokenCount) || 0;
+          outputTokensInt = parseInt(this.lastInteractionTokens.usageMetadata.candidatesTokenCount) || 0;
+        } else {
+          // Handle legacy format or direct token counts
+          inputTokensInt = parseInt(this.lastInteractionTokens.input) || 0;
+          outputTokensInt = parseInt(this.lastInteractionTokens.output) || 0;
+        }
+      } else {
+        // If tokens are passed directly (from Gemini)
+        if (typeof inputTokens === 'number' || typeof inputTokens === 'string') {
+          inputTokensInt = parseInt(inputTokens) || 0;
+        }
+        if (typeof outputTokens === 'number' || typeof outputTokens === 'string') {
+          outputTokensInt = parseInt(outputTokens) || 0;
+        }
+      }
 
       console.log('Logging tokens:', { inputTokensInt, outputTokensInt });
 
@@ -2097,8 +2135,11 @@ Only return the JSON in this format:
       }
 
       // Reset the token counts after logging
-      this.lastInteractionTokens['input'] = 0;
-      this.lastInteractionTokens['output'] = 0;
+      this.lastInteractionTokens = {
+        input: 0,
+        output: 0,
+        usageMetadata: null
+      };
     } catch (error) {
       console.error('Error logging interaction:', error);
     }
