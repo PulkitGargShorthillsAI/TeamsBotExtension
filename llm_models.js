@@ -73,12 +73,15 @@ class AzureOpenAIModel extends BaseLLMModel {
 
     // Return a similar structure as Gemini for compatibility
     return {
+      candidates: [
+        { content: { parts: [ { text: data.text } ] } }
+      ],
       response: {
         text: () => data.text,
         usageMetadata: usageMetadata,
         candidates: [
           { content: { parts: [ { text: data.text } ] } }
-        ]
+        ],
       },
       usageMetadata: usageMetadata // Add this to match Gemini's structure
     };

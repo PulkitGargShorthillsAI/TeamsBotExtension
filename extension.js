@@ -26,8 +26,8 @@ async function initializeFetch() {
 }
 
 // Initialize the LLM model
-// const llmModel = createLLMModel('gemini', process.env.GEMINI_API_KEY);
-const llmModel = createLLMModel('azure-openai', process.env.AZURE_OPENAI_API_KEY);
+const llmModel = createLLMModel('gemini', process.env.GEMINI_API_KEY);
+// const llmModel = createLLMModel('azure-openai', process.env.AZURE_OPENAI_API_KEY);
 
 function activate(context) {
   console.log('Teams Bot extension active');
@@ -1585,8 +1585,6 @@ class ChatViewProvider {
           ${JSON.stringify(detailedDiff).slice(1, -1)}
         `;
 
-        // 4. Use Gemini to generate title/description
-        const model = createLLMModel('gemini', process.env.GEMINI_API_KEY);
         const prompt = `
 You are a senior software engineer helping a project manager create clear, outcome-driven Azure DevOps ticket titles and descriptions from Git commit data.
 
@@ -1614,8 +1612,7 @@ Only return the JSON in this format:
 }
 `;
 
-        const response = await model.generateContent(prompt);
-        const result = response.response;
+        const result = await llmModel.generateContent(prompt);
         const json = JSON.parse(this._removeJsonWrapper(result.candidates[0].content.parts[0].text));
         const title = json.title;
         const description = json.description;
